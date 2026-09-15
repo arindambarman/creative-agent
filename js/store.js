@@ -14,7 +14,7 @@ import { SEED } from './seed.js';
 
 const LOCAL_KEY = 'creative-agent-v1';
 const LOCAL_HISTORY_LIMIT = 5; // per phase; localStorage holds about 5 MB in total
-const blank = () => ({ docs: { ...SEED }, projects: [], currentId: null, apiKey: '' });
+const blank = () => ({ docs: { ...SEED }, projects: [], currentId: null, apiKey: '', model: CONFIG.model });
 export const newId = () =>
   (crypto.randomUUID ? crypto.randomUUID()
     : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));

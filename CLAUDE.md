@@ -55,7 +55,7 @@ Two run modes, chosen by whether `js/config.js` has Supabase credentials:
 | `tests/*.test.js` | Unit tests for `model.js` and `markdown.js`, run with Node's built-in runner. |
 | `js/store.js` | Storage adapter: local and Supabase backends behind one interface. |
 | `js/seed.js` | Starter studio-brain text for new users. Templates with [brackets] to fill in. |
-| `js/config.js` | Supabase URL and anon key, model name. Empty by default. |
+| `js/config.js` | Supabase URL and anon key, default model, search limit, and `MODELS` (the Settings picker, with prices). |
 | `supabase/schema.sql` | Tables, row-level security, allowlist trigger, usage function. |
 | `supabase/functions/run-phase/index.ts` | Deno edge function. Holds the API key, checks budget, streams through, logs usage. |
 | `docs/*.md` | Full studio brain documents, for pasting in. Reference only, not loaded by the app. |
@@ -92,6 +92,16 @@ Working and tested:
   (2, 5, 10 seconds), discarding that request's half-written text. A stream silent for 2 minutes
   is stopped rather than left hanging.
 - Every prompt includes today's date, so deadlines and source recency are judged correctly.
+- Cost: people choose a model in Settings (default Claude Sonnet 5 at effort medium; Sonnet 4.6
+  and Haiku 4.5 also offered). Each phase shows its last run's model and approximate cost from
+  streamed usage. Discover is capped at `CONFIG.searchLimit` searches. The studio + brief block
+  and the latest earlier output are marked for prompt caching, so a phase run within five minutes
+  of the previous one reads them at a tenth of the price. The model choice and per-run cost are
+  kept in local mode only; in Supabase mode they last until reload.
+- Measured on the Direct phase (14 September 2026): Sonnet 4.6 $0.058 in 53s, Sonnet 5 $0.045 in
+  25s, Haiku 4.5 $0.018 in 22s. Plan straight after Direct on Sonnet 5 read 10,488 tokens from
+  cache. Haiku's directions were distinct but reached for generic fonts and props; Sonnet 5's two
+  directions were closer to each other than Sonnet 4.6's.
 - Unit tests for streaming and markdown. Browser-tested with a stubbed `fetch`.
 - All five phases run against the real API (claude-sonnet-4-6) with a test brief on
   14 September 2026. That run surfaced the date, sourcing, invented-outcome and stall issues fixed

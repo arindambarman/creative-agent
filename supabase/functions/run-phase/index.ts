@@ -8,6 +8,9 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// Keep in step with MODELS in js/config.js. The first one is used for anything else.
+const ALLOWED_MODELS = ['claude-sonnet-5', 'claude-sonnet-4-6', 'claude-haiku-4-5'];
+
 const ALLOWED_ORIGINS = (Deno.env.get('ALLOWED_ORIGINS') ?? '')
   .split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean);
 
@@ -66,13 +69,15 @@ Deno.serve(async (req) => {
   const tools = Array.isArray(body.tools)
     ? (body.tools as Array<{ type?: unknown }>).filter((t) => typeof t?.type === 'string' && t.type.startsWith('web_search_'))
     : [];
+  const effort = (body.output_config as { effort?: unknown } | undefined)?.effort;
   const payload = {
-    model: typeof body.model === 'string' ? body.model : 'claude-sonnet-4-6',
+    model: ALLOWED_MODELS.includes(body.model as string) ? body.model : ALLOWED_MODELS[0],
     max_tokens: Math.min(Number(body.max_tokens) || 8000, 16000),
     stream: true,
     system: body.system,
     messages: body.messages,
-    ...(tools.length ? { tools } : {})
+    ...(tools.length ? { tools } : {}),
+    ...(typeof effort === 'string' && ['low', 'medium', 'high'].includes(effort) ? { output_config: { effort } } : {})
   };
 
   const upstream = await fetch('https://api.anthropic.com/v1/messages', {

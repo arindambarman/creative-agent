@@ -191,7 +191,7 @@ Suggested posting order across platforms, and hashtags.`
   }
 ];
 
-export function buildMessage(phase, project, docs, priorOutputs, today = new Date()) {
+function buildParts(phase, project, docs, priorOutputs, today = new Date()) {
   const brief = project.brief || {};
   const dateLine = today.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const fields = [
@@ -207,12 +207,7 @@ export function buildMessage(phase, project, docs, priorOutputs, today = new Dat
   ].filter(([, v]) => v && String(v).trim())
    .map(([k, v]) => `- ${k}: ${v}`).join('\n');
 
-  const prior = PHASES
-    .filter(p => priorOutputs[p.id])
-    .map(p => `\n## ${p.name} output\n\n${priorOutputs[p.id]}`)
-    .join('\n');
-
-  return `# Studio reference
+  const studio = `# Studio reference
 
 ## Brand voice
 ${docs.voice || '(not filled in yet)'}
@@ -228,9 +223,28 @@ ${docs.tools || '(not filled in yet)'}
 Today's date: ${dateLine}. Use it when judging deadlines and how recent a source is.
 
 ${fields || '(the brief is empty — ask for what you need)'}
-${prior ? `\n# Work so far\n${prior}` : ''}
+`;
 
-# Your task
+  const prior = PHASES
+    .filter(p => priorOutputs[p.id])
+    .map((p, i) => `${i === 0 ? '# Work so far\n\n' : ''}## ${p.name} output\n\n${priorOutputs[p.id]}\n`);
 
-${phase.prompt}`;
+  return [studio, ...prior, `# Your task\n\n${phase.prompt}`];
+}
+
+// The message as one string, for reading or exporting.
+export function buildMessage(phase, project, docs, priorOutputs, today) {
+  return buildParts(phase, project, docs, priorOutputs, today).join('\n');
+}
+
+// The message as content blocks for the API. Everything before the task is the same for
+// every later phase of the project, so it is marked for caching: the studio documents and
+// brief, and the latest earlier output. A phase run within five minutes of the previous
+// one then reads those tokens at a tenth of the price.
+export function buildContent(phase, project, docs, priorOutputs, today) {
+  const parts = buildParts(phase, project, docs, priorOutputs, today);
+  const blocks = parts.map(text => ({ type: 'text', text }));
+  const cached = [0, blocks.length - 2].filter((i, n, all) => i >= 0 && all.indexOf(i) === n);
+  for (const i of cached) blocks[i].cache_control = { type: 'ephemeral' };
+  return blocks;
 }

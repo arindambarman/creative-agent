@@ -21,9 +21,9 @@ export class RunError extends Error {
 }
 
 // Newer models get the web search tool with dynamic filtering; older ones the basic one.
-export function webSearchTool(model) {
+export function webSearchTool(model, maxUses = 10) {
   const dynamic = /^claude-(opus-(4-[6-9]|5)|sonnet-(4-6|5)|fable-|mythos-)/.test(model);
-  return { type: dynamic ? 'web_search_20260209' : 'web_search_20250305', name: 'web_search', max_uses: 10 };
+  return { type: dynamic ? 'web_search_20260209' : 'web_search_20250305', name: 'web_search', max_uses: maxUses };
 }
 
 // Split buffered SSE text into parsed events, returning the unfinished tail.
@@ -43,11 +43,43 @@ export function splitEvents(buffer) {
 // One response's worth of state. Content blocks are rebuilt from the stream so a paused
 // turn can be sent back exactly; `text` carries on from earlier turns in the same run.
 export function createTurn(priorText = '', lastType = null) {
-  return { blocks: [], text: priorText, stopReason: null, lastType };
+  return { blocks: [], text: priorText, stopReason: null, lastType, usage: emptyUsage() };
+}
+
+export const emptyUsage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, searches: 0 });
+
+// Usage counts in message_start and message_delta are running totals for that response.
+function readUsage(target, u) {
+  if (!u) return;
+  if (u.input_tokens != null) target.input = u.input_tokens;
+  if (u.output_tokens != null) target.output = u.output_tokens;
+  if (u.cache_read_input_tokens != null) target.cacheRead = u.cache_read_input_tokens;
+  if (u.cache_creation_input_tokens != null) target.cacheWrite = u.cache_creation_input_tokens;
+  if (u.server_tool_use?.web_search_requests != null) target.searches = u.server_tool_use.web_search_requests;
+}
+
+export function addUsage(a, b) {
+  return {
+    input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite, searches: a.searches + b.searches
+  };
+}
+
+// Dollars for a run. Cache reads bill at 0.1x input, 5-minute cache writes at 1.25x.
+export function costOf(usage, price, searchPrice = 0.01) {
+  const perToken = n => n / 1e6;
+  return perToken(usage.input) * price.input
+    + perToken(usage.cacheRead) * price.input * 0.1
+    + perToken(usage.cacheWrite) * price.input * 1.25
+    + perToken(usage.output) * price.output
+    + usage.searches * searchPrice;
 }
 
 export function applyEvent(turn, ev, on = {}) {
   switch (ev.type) {
+    case 'message_start':
+      readUsage(turn.usage, ev.message?.usage);
+      break;
     case 'content_block_start': {
       const block = { ...ev.content_block };
       if (block.type === 'text') {
@@ -100,6 +132,7 @@ export function applyEvent(turn, ev, on = {}) {
     }
     case 'message_delta':
       turn.stopReason = ev.delta?.stop_reason ?? turn.stopReason;
+      readUsage(turn.usage, ev.usage);
       break;
     case 'error': {
       const err = new Error(ev.error?.message || 'The model returned an error.');
@@ -200,7 +233,9 @@ async function requestTurn({ url, headers, body, messages, signal, onText, onSea
       }
       if (buf.trim()) for (const ev of splitEvents(buf + '\n').events) applyEvent(turn, ev, { text: onText, search: onSearch });
     } catch (e) {
-      throw e instanceof StallError ? stalled(turn.text) : toRunError(e, turn.text);
+      const err = e instanceof StallError ? stalled(turn.text) : toRunError(e, turn.text);
+      err.usage = turn.usage; // tokens streamed before a failure are still billed
+      throw err;
     }
     return turn;
   } finally {
@@ -213,7 +248,7 @@ export async function callModel({
   fetchImpl = fetch, idleMs = 120000, retryDelays = RETRY_DELAYS_MS
 }) {
   const messages = [...body.messages];
-  let text = '', lastType = null;
+  let text = '', lastType = null, usage = emptyUsage();
 
   for (let attempt = 0; ; attempt++) {
     let turn;
@@ -222,6 +257,8 @@ export async function callModel({
         turn = await requestTurn({ url, headers, body, messages, signal, onText, onSearch, fetchImpl, idleMs, text, lastType });
         break;
       } catch (e) {
+        if (e.usage) usage = addUsage(usage, e.usage);
+        e.usage = usage;
         if (!e.retryable || retry >= retryDelays.length) throw e;
         // Discard this request's half-written turn and send the same request again.
         onText?.(text);
@@ -231,6 +268,7 @@ export async function callModel({
     }
     text = turn.text;
     lastType = turn.lastType;
+    usage = addUsage(usage, turn.usage);
 
     // Long web search turns pause; sending the partial turn back lets the server carry on.
     if (turn.stopReason === 'pause_turn' && attempt < MAX_CONTINUATIONS) {
@@ -245,6 +283,7 @@ export async function callModel({
     }
     return {
       text,
+      usage,
       stopReason: turn.stopReason,
       incomplete: ['max_tokens', 'pause_turn', 'refusal'].includes(turn.stopReason)
     };

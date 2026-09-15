@@ -1,6 +1,32 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { callModel, webSearchTool, splitEvents, cleanBlocks } from '../js/model.js';
+import { callModel, webSearchTool, splitEvents, cleanBlocks, costOf } from '../js/model.js';
+
+test('adds up usage across a paused turn, including cache and searches', async () => {
+  const paused = [
+    { type: 'message_start', message: { usage: { input_tokens: 1000, cache_read_input_tokens: 4000, cache_creation_input_tokens: 0, output_tokens: 1 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Part one. ' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'pause_turn' }, usage: { output_tokens: 300, server_tool_use: { web_search_requests: 4 } } }
+  ];
+  const finished = [
+    { type: 'message_start', message: { usage: { input_tokens: 2000, cache_creation_input_tokens: 500, output_tokens: 1 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Part two.' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 700, server_tool_use: { web_search_requests: 2 } } }
+  ];
+  const { impl } = fakeFetch([new Response(sse(paused)), new Response(sse(finished))]);
+  const { usage } = await callModel({ ...baseArgs, fetchImpl: impl });
+  assert.deepEqual(usage, { input: 3000, output: 1000, cacheRead: 4000, cacheWrite: 500, searches: 6 });
+});
+
+test('costs a run from usage and model prices', () => {
+  const usage = { input: 1_000_000, output: 100_000, cacheRead: 1_000_000, cacheWrite: 100_000, searches: 5 };
+  // $2 input + $1 output + $0.20 cache read + $0.25 cache write + $0.05 searches
+  assert.equal(costOf(usage, { input: 2, output: 10 }).toFixed(2), '3.50');
+});
 
 // Build an SSE response body from a list of events, optionally split at awkward byte boundaries.
 const sse = (events, { chunkSize = 17, failAfter = null } = {}) => {

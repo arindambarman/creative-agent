@@ -1,8 +1,20 @@
-import { CONFIG, USE_SUPABASE } from './config.js';
-import { PHASES, SYSTEM, buildMessage } from './phases.js';
+import { CONFIG, MODELS, WEB_SEARCH_PRICE, USE_SUPABASE, modelInfo } from './config.js';
+import { PHASES, SYSTEM, buildContent } from './phases.js';
 import { store, newId } from './store.js';
 import { md, esc, stripPreamble } from './markdown.js';
-import { callModel, webSearchTool, RunError } from './model.js';
+import { callModel, webSearchTool, costOf, RunError } from './model.js';
+
+const currentModel = () => modelInfo(state.model);
+
+// "about $0.08" — rounded up to the cent so a run never looks free.
+const dollars = n => `about $${(Math.ceil(n * 100) / 100).toFixed(2)}`;
+
+function runCostLine(run) {
+  if (!run) return '';
+  const m = modelInfo(run.model);
+  const searches = run.usage.searches ? ` · ${run.usage.searches} searches` : '';
+  return ` · ${esc(m?.label || run.model)} · ${dollars(costOf(run.usage, m, WEB_SEARCH_PRICE))}${searches}`;
+}
 
 const $ = id => document.getElementById(id);
 
@@ -48,16 +60,17 @@ async function newProject() {
 async function runPhase(project, phase, { signal, onText, onSearch, onRetry }) {
   const prior = {};
   for (const p of PHASES) { if (p.id === phase.id) break; if (project.outputs[p.id]) prior[p.id] = project.outputs[p.id]; }
-  const message = buildMessage(phase, project, state.docs, prior);
+  const model = currentModel();
 
   const body = {
-    model: CONFIG.model,
+    model: model.id,
     max_tokens: 16000,
     stream: true,
     system: SYSTEM,
-    messages: [{ role: 'user', content: message }]
+    messages: [{ role: 'user', content: buildContent(phase, project, state.docs, prior) }]
   };
-  if (phase.search) body.tools = [webSearchTool(CONFIG.model)];
+  if (model.effort) body.output_config = { effort: model.effort };
+  if (phase.search) body.tools = [webSearchTool(model.id, CONFIG.searchLimit)];
 
   let url, headers;
   if (USE_SUPABASE) {
@@ -67,7 +80,9 @@ async function runPhase(project, phase, { signal, onText, onSearch, onRetry }) {
     headers = { 'Content-Type': 'application/json', apikey: CONFIG.supabaseAnonKey, Authorization: `Bearer ${token}` };
     body.phase = phase.id; // for the usage log; the edge function doesn't forward it
   } else {
-    if (!state.apiKey) throw new RunError('Add your Anthropic API key in Settings before running a phase.');
+    if (!state.apiKey) {
+      throw Object.assign(new RunError('Add your Anthropic API key in Settings before running a phase.'), { needsKey: true });
+    }
     url = 'https://api.anthropic.com/v1/messages';
     headers = {
       'Content-Type': 'application/json',
@@ -182,7 +197,7 @@ function renderPhase(phase) {
     <div id="err">${notice ? `<p class="note" style="margin-top:16px">${esc(notice)}</p>` : ''}</div>
     <div id="body">${busyHere ? '<p class="meta">Still running. The output will appear here when it finishes.</p>'
       : out ? `<div class="out" style="border-left-color:${phase.color}">${md(out)}</div>
-      <div class="meta">Last run ${new Date(p.runAt[phase.id] || Date.now()).toLocaleString()}</div>`
+      <div class="meta">Last run ${new Date(p.runAt[phase.id] || Date.now()).toLocaleString()}${runCostLine(p.runInfo?.[phase.id])}</div>`
       : `<div class="empty" style="margin-top:18px">Nothing here yet. Run the phase to generate it, then edit anything you want to change.</div>`}</div>`;
 
   $('run').onclick = () => doRun(phase);
@@ -234,6 +249,7 @@ async function doRun(phase) {
     });
     // Research runs narrate between searches; the saved output starts at the first heading.
     const text = phase.search ? stripPreamble(result.text) : result.text;
+    (p.runInfo ??= {})[phase.id] = { model: currentModel().id, usage: result.usage };
     await savePhaseOutput(p, phase.id, text, false);
     if (result.incomplete) phaseNotice = { phaseId: phase.id, text: INCOMPLETE[result.stopReason] };
     running = null;
@@ -246,12 +262,15 @@ async function doRun(phase) {
     renderPhase(phase);
     const partial = e.partial?.trim() ? e.partial : '';
     $('err').innerHTML = `<div class="${e.aborted ? 'note' : 'err'}" style="margin-top:16px">${esc(e.message)}
-      ${partial ? ' The text written so far is below.' : ''}</div>`;
+      ${partial ? ' The text written so far is below.' : ''}
+      ${e.needsKey ? '<div class="row" style="margin-top:10px"><button class="btn" id="open-settings">Open Settings</button></div>' : ''}</div>`;
+    if ($('open-settings')) $('open-settings').onclick = settings;
     if (partial) {
       $('body').innerHTML = `<div class="out" style="border-left-color:${phase.color}">${md(partial)}</div>
         <div class="row" style="margin-top:14px"><button class="btn" id="keep">Keep this partial output</button>
         <span class="meta" style="margin:0">${p.outputs[phase.id] ? 'Replaces the current output. The current one stays in history.' : ''}</span></div>`;
       $('keep').onclick = async () => {
+        if (e.usage) (p.runInfo ??= {})[phase.id] = { model: currentModel().id, usage: e.usage };
         await savePhaseOutput(p, phase.id, partial, true);
         phaseNotice = { phaseId: phase.id, text: 'Saved a partial run. Edit it to finish, or run again.' };
         renderRail(); renderPhase(phase);
@@ -368,8 +387,9 @@ function settings() {
       : `<div><label for="k">Anthropic API key</label>
          <input id="k" type="password" value="${esc(state.apiKey)}" placeholder="sk-ant-…" autocomplete="off">
          <p class="meta">Stored in this browser only, and sent straight to Anthropic. Get a key at console.anthropic.com.</p></div>`}
-    <div><label for="m">Model</label><input id="m" value="${esc(CONFIG.model)}" disabled>
-      <p class="meta">Change this in js/config.js.</p></div>
+    <div><label for="m">Model</label>
+      <select id="m">${MODELS.map(m => `<option value="${esc(m.id)}" ${m.id === currentModel().id ? 'selected' : ''}>${esc(m.label)} — ${esc(m.note)} ($${m.input} in / $${m.output} out per million tokens)</option>`).join('')}</select>
+      <p class="meta">Each phase shows what its last run cost. Web searches in Discover add $${WEB_SEARCH_PRICE.toFixed(2)} each.${USE_SUPABASE ? ' This choice lasts until you reload the page.' : ''}</p></div>
     <div class="row"><button class="btn btn-go" id="s-save">Save</button><button class="btn" id="s-close">Close</button>
       <span class="sp" style="flex:1"></span>
       ${USE_SUPABASE
@@ -378,7 +398,11 @@ function settings() {
   </div></div>`;
   const close = () => { $('modal-root').innerHTML = ''; };
   $('s-close').onclick = close;
-  $('s-save').onclick = () => { if ($('k')) state.apiKey = $('k').value.trim(); persist('all'); close(); };
+  $('s-save').onclick = () => {
+    if ($('k')) state.apiKey = $('k').value.trim();
+    state.model = $('m').value;
+    persist('all'); close();
+  };
   if ($('s-reset')) $('s-reset').onclick = async () => {
     if (confirm('Delete all projects and studio documents from this browser? This cannot be undone.')) {
       await store.reset();
