@@ -189,6 +189,10 @@ function renderPhase(phase) {
     ${prevMissing ? `<p class="note" style="margin-bottom:16px">${prevPhase.name} hasn't run yet. This phase works better with it, but you can run it anyway.</p>` : ''}
     <div class="row" id="actions">
       <button class="btn btn-go" id="run" ${running ? 'disabled' : ''}>${busyHere ? 'Running…' : out ? 'Run again' : 'Run ' + phase.name}</button>
+      <label class="model-pick" title="Model used for the next run">
+        <span class="sr-only">Model</span>
+        <select id="run-model" ${running ? 'disabled' : ''}>${MODELS.map(m => `<option value="${esc(m.id)}" ${m.id === currentModel().id ? 'selected' : ''}>${esc(m.label)} · $${m.input}/$${m.output}</option>`).join('')}</select>
+      </label>
       ${busyHere ? '<button class="btn" id="stop">Stop</button>' : ''}
       ${out && !busyHere ? '<button class="btn" id="edit">Edit output</button><button class="btn btn-quiet" id="history">History</button><button class="btn btn-quiet" id="copy">Copy</button>' : ''}
       ${phase.search ? '<span class="meta" style="margin:0">Uses live web search</span>' : ''}
@@ -201,6 +205,8 @@ function renderPhase(phase) {
       : `<div class="empty" style="margin-top:18px">Nothing here yet. Run the phase to generate it, then edit anything you want to change.</div>`}</div>`;
 
   $('run').onclick = () => doRun(phase);
+  // Same setting as the picker in Settings, so a choice here sticks for later runs.
+  $('run-model').onchange = e => { state.model = e.target.value; persist('all'); };
   if ($('stop')) $('stop').onclick = () => running?.controller.abort();
   if (out && !busyHere) {
     $('copy').onclick = async () => { await navigator.clipboard.writeText(out); $('copy').textContent = 'Copied'; setTimeout(() => { if ($('copy')) $('copy').textContent = 'Copy'; }, 1500); };
