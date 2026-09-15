@@ -40,13 +40,19 @@ create table if not exists phase_runs (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects on delete cascade,
   user_id uuid not null references auth.users on delete cascade,
-  phase text not null check (phase in ('discover','direct','plan','deliver','publish')),
+  phase text not null,
   output text not null default '',
   is_current boolean default true,
   edited boolean default false,
   created_at timestamptz default now()
 );
 create index if not exists phase_runs_project_idx on phase_runs(project_id, phase, created_at desc);
+
+-- The phases a run can belong to. Kept as a separate, named constraint so adding a phase is a
+-- re-run of this file. Keep in step with PHASES in js/phases.js.
+alter table phase_runs drop constraint if exists phase_runs_phase_check;
+alter table phase_runs add constraint phase_runs_phase_check
+  check (phase in ('discover','propose','direct','plan','deliver','publish'));
 
 -- Only one current run per phase per project.
 create unique index if not exists phase_runs_current_idx

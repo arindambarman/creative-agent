@@ -22,13 +22,14 @@ suggestions are yours rather than generic.
 
 ## How it works
 
-Five phases run in order. Each produces output you review and edit before the next one starts,
+Six phases run in order, one of them optional. Each produces output you review and edit before the next one starts,
 and each reads and writes the same shared project brief — so the palette chosen on day one still
 matches the storyboard, the 3D shot list, and the final captions.
 
 | Phase | What it does |
 |---|---|
 | **Discover** | Current trends for the client's category, plus the marketing angle |
+| **Propose** *(optional)* | A proposal ready to paste into Upwork: meets the client's screening instructions, answers their questions, sets price, milestones and timeline. Later phases hold to what it promises |
 | **Direct** | Concept, color palette, and type direction — as options, not verdicts |
 | **Plan** | Frame-by-frame storyboard, 3D model specs, task breakdown with time estimates |
 | **Deliver** | Assembly checklist, platform exports, review against the original brief |

@@ -11,6 +11,7 @@
 
 import { CONFIG, USE_SUPABASE } from './config.js';
 import { SEED } from './seed.js';
+import { PHASES } from './phases.js';
 
 const LOCAL_KEY = 'creative-agent-v1';
 const LOCAL_HISTORY_LIMIT = 5; // per phase; localStorage holds about 5 MB in total
@@ -70,7 +71,7 @@ const localStore = {
 
 // ---- Supabase ---------------------------------------------------------------
 
-const PHASE_IDS = ['discover', 'direct', 'plan', 'deliver', 'publish'];
+const PHASE_IDS = PHASES.map(p => p.id);
 
 const remoteStore = {
   mode: 'supabase',

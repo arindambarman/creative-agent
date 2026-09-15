@@ -13,6 +13,19 @@ test('includes today\'s date and the brief', () => {
   assert.match(text, /- Client: Hearth & Grain/);
 });
 
+test('Propose sits right after Discover, is optional, and later phases read it', () => {
+  assert.deepEqual(PHASES.map(p => p.id), ['discover', 'propose', 'direct', 'plan', 'deliver', 'publish']);
+  assert.equal(phase('propose').optional, true);
+  const text = buildMessage(phase('direct'), project, docs, { discover: 'Research.', propose: '## Proposal\nHello' }, today);
+  assert.match(text, /## Discover output[\s\S]*## Propose output[\s\S]*Hello/);
+  assert.match(phase('plan').prompt, /Propose output/);
+  assert.match(phase('publish').prompt, /never publish its price/);
+});
+
+test('every phase has a summary focus', () => {
+  for (const p of PHASES) assert.ok(p.summary, `${p.id} has no summary focus`);
+});
+
 test('includes the original client request only when there is one', () => {
   const withRequest = buildMessage(phase('discover'), { brief: { ...project.brief, request: 'Need 3 posts.' } }, docs, {}, today);
   assert.match(withRequest, /## Original client request[\s\S]*<client_request>\nNeed 3 posts\.\n<\/client_request>/);

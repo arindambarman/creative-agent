@@ -49,6 +49,30 @@ export function normaliseBullets(src, max = 6) {
   return bullets.join('\n');
 }
 
+// The text under one "## Heading", up to the next heading of the same or higher level, as plain
+// text ready to paste: bold, italics, code and link markup removed, paragraphs kept.
+export function sectionText(src, title) {
+  const lines = String(src ?? '').split('\n');
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const start = lines.findIndex(l => new RegExp(`^(#{1,4})\\s+${escaped}\\s*$`, 'i').test(l.trim()));
+  if (start === -1) return '';
+  const level = lines[start].trim().match(/^#+/)[0].length;
+  const out = [];
+  for (const line of lines.slice(start + 1)) {
+    const h = line.trim().match(/^(#{1,4})\s/);
+    if (h && h[1].length <= level) break;
+    out.push(line);
+  }
+  return out.join('\n')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1$2')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '$1 ($2)')
+    .replace(/^\s*(---|\*\*\*|___)\s*$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export const withSummary = (bullets, body) => `## Summary\n\n${bullets}\n\n${String(body ?? '').replace(/^\s+/, '')}`;
 
 export function md(src) {

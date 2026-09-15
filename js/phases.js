@@ -60,6 +60,56 @@ Anything missing from the brief that would change the direction.
 Every source cited above, one per line, as a markdown link with its publication month.`
   },
   {
+    id: 'propose',
+    name: 'Propose',
+    blurb: 'Proposal to win the job',
+    color: '#4E9A96',
+    optional: true, // only for jobs that need a pitch, such as Upwork posts
+    summary: 'the opening hook; the price and timeline being bid, or that they are still to set; portfolio pieces to attach; any screening instruction and how it was met; the question that invites a reply',
+    prompt: `A proposal to win this job, written to paste straight into Upwork or a reply email.
+
+Before writing, check the brief for requirements the client set for replies: notes under "For
+the proposal", screening words, questions to answer, samples to include. Every one of them must
+be met. If the client asks you to start the proposal a certain way, the proposal starts that way.
+
+## Proposal
+The text to send. 120 to 220 words, in the designer's voice from the brand voice document.
+- The first two lines are all the client sees in the list of proposals, so they must be about
+  the client's job: a specific detail from their request and one line of the angle from Discover.
+  No greetings like "Dear hiring manager", no "I am a passionate designer".
+- Show that the job is understood: the deliverables and what they are for, in plain words.
+- One or two portfolio pieces that genuinely match, named as they appear in the work document,
+  with one line each on why they are relevant. Never cite a piece the notes say not to use.
+- The approach in two or three sentences: the direction the Discover research points to and the
+  method (2D, AI, 3D), without committing to final colours or concepts yet.
+- Timeline and price: see the bid below. Use the same figures.
+- End with one short, specific question about the job that the client will want to answer.
+Plain text a client can read on a phone: short paragraphs, no markdown headings inside it.
+
+## Answers to the client's questions
+If the request asks questions or sets screening tasks, answer each one in a line or two, ready
+to paste. Otherwise write "None asked."
+
+## Bid
+- **Price** — only from rates in the work and services document, or within a budget the client
+  stated. Explain the figure in one line. If neither exists, write [set your price] and say what
+  to consider. Never invent a rate.
+- **Type** — fixed price or hourly, matching what the client posted.
+- **Milestones** — for fixed price, two or three milestones with what each delivers and its share
+  of the price.
+- **Timeline** — delivery date or duration measured from today's date, checked against the
+  client's deadline. Say plainly if the deadline is tight.
+- **Scope promised** — the exact deliverables and number of revision rounds this proposal
+  commits to. Later phases will hold to this.
+
+## Attach
+Which portfolio pieces to attach, in order, and what each proves.
+
+## Before sending
+Anything to check or change first: placeholders to fill, claims that need proof, parts of the
+request that are unclear enough to ask about after the client replies.`
+  },
+  {
     id: 'direct',
     name: 'Direct',
     blurb: 'Concept, colour and type',
@@ -79,6 +129,9 @@ For each direction:
 
 Make the two directions genuinely different. Not the same idea in two palettes: different
 stories, different moods, aimed at different instincts.
+
+If a Propose output is in the work so far, both directions must deliver the scope, method and
+timeline it promised the client. Build on the approach it described rather than contradicting it.
 
 ## Recommendation
 Which one, in two or three sentences, and what would make you change your mind.
@@ -113,7 +166,10 @@ A table: task, tool, estimated hours. Use the time costs from the tools document
 
 ## Scope check
 Compare the total against the brief's budget and deadline. State plainly whether it fits.
-If it doesn't, give two ways to cut scope without losing the idea.
+If a Propose output exists, also compare against the price, milestones, revision rounds and
+timeline it bid: say whether the hours support that price, and flag any frame or deliverable
+that goes beyond what was promised. If it doesn't fit, give two ways to cut scope without losing
+the idea.
 
 ## What's still needed from the client
 Assets, dimensions, approvals, or copy required before work starts.`
@@ -135,8 +191,9 @@ A table: deliverable, platform, exact dimensions, file format, and any platform 
 (white background, safe margins, file size limits). Cover every platform in the brief.
 
 ## Review against the brief
-Go back to the original brief and the chosen direction, then check:
-- Does every deliverable in the brief exist
+Go back to the original brief, the chosen direction, and the scope promised in the proposal if
+there is one, then check:
+- Does every deliverable in the brief and the proposal exist
 - Is the palette consistent across all pieces
 - Does the product read accurately: shape, colour, label, proportions
 - Does the key message read at thumbnail size
@@ -168,6 +225,9 @@ says a choice depends on something (the client's photos, a test, a client reply)
 as though it went one way. Put a short placeholder in square brackets for the designer to fill,
 for example [which path the jar took: 2D composite or Blender] or [client feedback]. The same
 goes for results, numbers, and anything the client said.
+
+The proposal, if there is one, was a pitch to the client: never publish its price, milestones
+or private terms. It can inform how the job was won and what the client asked for.
 
 ## Case study
 Problem, approach, key decisions, result. Around 200 words. The decisions are the interesting

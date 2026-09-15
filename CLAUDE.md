@@ -29,7 +29,7 @@ Client brief
     ↓
 Creative agent  ──  three studio brain docs (brand voice, work and services, tools and clients)
     ↓               one project brief file that every phase reads and writes back to
-Five phases: discover → direct → plan → deliver → publish
+Six phases: discover → propose (optional) → direct → plan → deliver → publish
 ```
 
 Two run modes, chosen by whether `js/config.js` has Supabase credentials:
@@ -100,6 +100,17 @@ Working and tested:
   (34 pages, 8 tables, 14 links, correct heading outline) and reading it with python-docx.
   WordprocessingML is order-sensitive (e.g. `w:rStyle` must be first in `w:rPr`, `w:shd` before
   `w:spacing` in `w:pPr`): check the schema order when adding formatting, and re-test in Word.
+- Propose phase (optional, after Discover): writes a paste-ready proposal (120–220 words) that
+  meets the client's reply instructions from the brief, answers their questions, and sets a bid
+  (price only from studio rates or the client's budget, else a placeholder; milestones;
+  timeline from today; scope promised). Direct, Plan, Deliver and Publish are told to hold to
+  that scope, and Publish never publishes the bid. "Copy proposal" copies just the Proposal
+  section as plain text via `sectionText()`. Optional phases are skipped when a later phase
+  looks for the previous phase, and aren't counted in export totals until run. Adding a phase
+  needs the `phase_runs_phase_check` constraint in `supabase/schema.sql` updated and re-run.
+  Tested for real: met a screening word, bid the client's budget with milestones, and Plan
+  compared its hours to the bid. The studio brain has no portfolio URLs, so it can name pieces
+  but not link them.
 - Phase summaries: every phase prompt asks for a leading "## Summary" of four to six bullets
   (20 words or fewer each), focused by the phase's `summary` field in `js/phases.js`. The app
   splits it off with `splitSummary()` and shows it in a card above the output, including while

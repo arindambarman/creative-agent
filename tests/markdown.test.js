@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { md, esc, stripPreamble, splitSummary, normaliseBullets, withSummary } from '../js/markdown.js';
+import { md, esc, stripPreamble, splitSummary, normaliseBullets, withSummary, sectionText } from '../js/markdown.js';
+
+test('extracts one section as plain text ready to paste', () => {
+  const out = '## Summary\n- a\n\n## Proposal\nYour **candle** launch caught my eye.\n\nSee [my work](https://x.com).\n\n### Detail kept\nMore.\n\n## Bid\n- $500';
+  assert.equal(sectionText(out, 'Proposal'), 'Your candle launch caught my eye.\n\nSee my work (https://x.com).\n\n### Detail kept\nMore.');
+  assert.equal(sectionText(out, 'bid'), '- $500');
+  assert.equal(sectionText(out, 'Missing'), '');
+});
 
 test('splits a leading summary from the body', () => {
   const { summary, body } = splitSummary('## Summary\n\n- Angle: quiet morning\n- 21 hours\n\n## Category landscape\nText');

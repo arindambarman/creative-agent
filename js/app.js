@@ -1,7 +1,7 @@
 import { CONFIG, MODELS, WEB_SEARCH_PRICE, USE_SUPABASE, modelInfo } from './config.js';
 import { PHASES, SYSTEM, buildContent, summaryPrompt } from './phases.js';
 import { store, newId } from './store.js';
-import { md, esc, stripPreamble, splitSummary, normaliseBullets, withSummary } from './markdown.js';
+import { md, esc, stripPreamble, splitSummary, normaliseBullets, withSummary, sectionText } from './markdown.js';
 import { callModel, webSearchTool, costOf, RunError } from './model.js';
 import { INTAKE_MODEL, INTAKE_SYSTEM, buildIntakePrompt, parseIntake, notesWithQuestions } from './intake.js';
 import { projectDocument, buildDocx, buildPrintHtml, fileSlug } from './document.js';
@@ -175,7 +175,7 @@ function renderRail() {
   for (const ph of PHASES) {
     const done = p && p.outputs[ph.id];
     nav.push(`<div class="nav ${view.screen === ph.id ? 'on' : ''}" data-go="${ph.id}">
-      <span class="dot ${done ? 'done' : ''}" style="${done ? `background:${ph.color}` : ''}"></span>${ph.name}</div>`);
+      <span class="dot ${done ? 'done' : ''}" style="${done ? `background:${ph.color}` : ''}"></span>${ph.name}${ph.optional ? ' <small>optional</small>' : ''}</div>`);
   }
   nav.push('<div class="rail-gap"></div>');
   nav.push(`<div class="nav ${view.screen === 'studio' ? 'on' : ''}" data-go="studio"><span class="dot"></span>Studio brain</div>`);
@@ -315,8 +315,10 @@ function renderPhase(phase) {
   if (!p) return renderEmpty();
   const out = p.outputs[phase.id];
   const idx = PHASES.findIndex(x => x.id === phase.id);
-  const prevPhase = idx > 0 ? PHASES[idx - 1] : null;
+  // The nearest earlier phase that isn't optional: skipping Propose shouldn't nag in Direct.
+  const prevPhase = PHASES.slice(0, idx).reverse().find(ph => !ph.optional) || null;
   const prevMissing = prevPhase && !p.outputs[prevPhase.id];
+  const proposalText = phase.id === 'propose' && out ? sectionText(out, 'Proposal') : '';
   const busyHere = running && running.projectId === p.id && running.phaseId === phase.id;
   const busyElsewhere = running && !busyHere;
   const notice = phaseNotice?.phaseId === phase.id ? phaseNotice.text : '';
@@ -328,6 +330,7 @@ function renderPhase(phase) {
       <div><h1>${phase.name}</h1><p class="sub" style="margin:0">${phase.blurb}</p></div>
     </div>
     ${prevMissing ? `<p class="note" style="margin-bottom:16px">${prevPhase.name} hasn't run yet. This phase works better with it, but you can run it anyway.</p>` : ''}
+    ${phase.optional && !out ? `<p class="note" style="margin-bottom:16px">Optional. Use it when the job needs a pitch, such as an Upwork post. Paste the client's request on the Brief screen first so the proposal meets their instructions. Later phases hold to the scope, price and timeline it promises.</p>` : ''}
     <div class="row" id="actions">
       <button class="btn btn-go" id="run" ${running ? 'disabled' : ''}>${busyHere ? 'Running…' : out ? 'Run again' : 'Run ' + phase.name}</button>
       <label class="model-pick" title="Model used for the next run">
@@ -335,7 +338,8 @@ function renderPhase(phase) {
         <select id="run-model" ${running ? 'disabled' : ''}>${MODELS.map(m => `<option value="${esc(m.id)}" ${m.id === currentModel().id ? 'selected' : ''}>${esc(m.label)} · $${m.input}/$${m.output}</option>`).join('')}</select>
       </label>
       ${busyHere ? '<button class="btn" id="stop">Stop</button>' : ''}
-      ${out && !busyHere ? '<button class="btn" id="edit">Edit output</button><button class="btn btn-quiet" id="history">History</button><button class="btn btn-quiet" id="copy">Copy</button>' : ''}
+      ${out && !busyHere && proposalText ? '<button class="btn" id="copy-proposal">Copy proposal</button>' : ''}
+      ${out && !busyHere ? '<button class="btn" id="edit">Edit output</button><button class="btn btn-quiet" id="history">History</button><button class="btn btn-quiet" id="copy">Copy all</button>' : ''}
       ${phase.search ? '<span class="meta" style="margin:0">Uses live web search</span>' : ''}
     </div>
     ${busyElsewhere ? '<p class="note" style="margin-top:16px">Another phase is still running. It will save when it finishes.</p>' : ''}
@@ -351,7 +355,19 @@ function renderPhase(phase) {
   if ($('stop')) $('stop').onclick = () => running?.controller.abort();
   if (out && !busyHere) {
     if ($('add-summary')) $('add-summary').onclick = () => doAddSummary(p, phase);
-    $('copy').onclick = async () => { await navigator.clipboard.writeText(out); $('copy').textContent = 'Copied'; setTimeout(() => { if ($('copy')) $('copy').textContent = 'Copy'; }, 1500); };
+    const copyButton = (id, text, label) => {
+      $(id).onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          $(id).textContent = 'Copied';
+        } catch (e) {
+          $(id).textContent = "Couldn't copy";
+        }
+        setTimeout(() => { if ($(id)) $(id).textContent = label; }, 1500);
+      };
+    };
+    copyButton('copy', out, 'Copy all');
+    if (proposalText) copyButton('copy-proposal', proposalText, 'Copy proposal');
     $('history').onclick = () => renderHistory(phase);
     $('edit').onclick = () => {
       $('body').innerHTML = `<div class="stack" style="margin-top:18px">
