@@ -13,6 +13,12 @@ test('includes today\'s date and the brief', () => {
   assert.match(text, /- Client: Hearth & Grain/);
 });
 
+test('includes the original client request only when there is one', () => {
+  const withRequest = buildMessage(phase('discover'), { brief: { ...project.brief, request: 'Need 3 posts.' } }, docs, {}, today);
+  assert.match(withRequest, /## Original client request[\s\S]*<client_request>\nNeed 3 posts\.\n<\/client_request>/);
+  assert.doesNotMatch(buildMessage(phase('discover'), project, docs, {}, today), /Original client request/);
+});
+
 test('first phase caches the studio and brief block only', () => {
   const blocks = buildContent(phase('discover'), project, docs, {}, today);
   assert.equal(blocks.length, 2);

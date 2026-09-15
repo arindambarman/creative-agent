@@ -83,6 +83,7 @@ matches the storyboard, the 3D shot list, and the final captions.
 - Checks for client approval and NDA status before drafting anything public
 
 ### Working with it
+- Paste a client request straight from Upwork, email or chat, and the brief fills itself in — with a list of what the client didn't say
 - Project workspace keeping the brief, phase outputs, and reference images together
 - Upload client photos, logos, and references directly into a project
 - Edit any output in place; your edits carry forward into later phases

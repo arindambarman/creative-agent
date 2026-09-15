@@ -51,7 +51,8 @@ Two run modes, chosen by whether `js/config.js` has Supabase credentials:
 | `js/app.js` | State, rendering, events, phase history UI. The only file that touches the DOM. |
 | `js/phases.js` | **The agent itself.** System prompt, five phase prompts, prompt assembly. |
 | `js/model.js` | Messages API streaming: resumes `pause_turn`, flags truncation, keeps partial text on failure. No DOM. |
-| `js/markdown.js` | `md()` renderer and `esc()`. No DOM. |
+| `js/markdown.js` | `md()` renderer, `esc()`, `stripPreamble()`. No DOM. |
+| `js/intake.js` | Turns a pasted client request into brief fields: prompt, JSON parsing, open questions. No DOM. |
 | `tests/*.test.js` | Unit tests for `model.js` and `markdown.js`, run with Node's built-in runner. |
 | `js/store.js` | Storage adapter: local and Supabase backends behind one interface. |
 | `js/seed.js` | Starter studio-brain text for new users. Templates with [brackets] to fill in. |
@@ -92,6 +93,13 @@ Working and tested:
   (2, 5, 10 seconds), discarding that request's half-written text. A stream silent for 2 minutes
   is stopped rather than left hanging.
 - Every prompt includes today's date, so deadlines and source recency are judged correctly.
+- Client request intake: on the Brief screen, a pasted job post (Upwork, email, chat) is read by
+  Claude Haiku 4.5 (about $0.003) and fills the form for review. Nothing saves until Save brief.
+  Unstated fields stay empty and become "Not stated in the request" questions in the notes;
+  proposal requirements (screening words, portfolio asks) are kept under "For the proposal".
+  The original request is saved as `brief.request`, shown to every phase inside
+  `<client_request>` tags as the client's words rather than instructions, and included in export.
+  Tested on a real sample post: all fields correct, "within 2 weeks" converted to a date.
 - Cost: people choose a model in Settings (default Claude Sonnet 5 at effort medium; Sonnet 4.6
   and Haiku 4.5 also offered). Each phase shows its last run's model and approximate cost from
   streamed usage. Discover is capped at `CONFIG.searchLimit` searches. The studio + brief block

@@ -3,6 +3,7 @@ import { PHASES, SYSTEM, buildContent } from './phases.js';
 import { store, newId } from './store.js';
 import { md, esc, stripPreamble } from './markdown.js';
 import { callModel, webSearchTool, costOf, RunError } from './model.js';
+import { INTAKE_MODEL, INTAKE_SYSTEM, buildIntakePrompt, parseIntake, notesWithQuestions } from './intake.js';
 
 const currentModel = () => modelInfo(state.model);
 
@@ -71,28 +72,49 @@ async function runPhase(project, phase, { signal, onText, onSearch, onRetry }) {
   };
   if (model.effort) body.output_config = { effort: model.effort };
   if (phase.search) body.tools = [webSearchTool(model.id, CONFIG.searchLimit)];
+  body.phase = phase.id; // for the usage log; the edge function doesn't forward it
 
-  let url, headers;
+  const { url, headers } = await apiTarget();
+  if (!USE_SUPABASE) delete body.phase;
+  return callModel({ url, headers, body, signal, onText, onSearch, onRetry });
+}
+
+// Where requests go: straight to Anthropic with the browser's key, or through the edge function.
+async function apiTarget() {
   if (USE_SUPABASE) {
     const token = await store.accessToken();
-    if (!token) throw new RunError('Your session has expired. Reload the page and sign in again to run a phase.');
-    url = `${CONFIG.supabaseUrl}/functions/v1/run-phase`;
-    headers = { 'Content-Type': 'application/json', apikey: CONFIG.supabaseAnonKey, Authorization: `Bearer ${token}` };
-    body.phase = phase.id; // for the usage log; the edge function doesn't forward it
-  } else {
-    if (!state.apiKey) {
-      throw Object.assign(new RunError('Add your Anthropic API key in Settings before running a phase.'), { needsKey: true });
-    }
-    url = 'https://api.anthropic.com/v1/messages';
-    headers = {
+    if (!token) throw new RunError('Your session has expired. Reload the page and sign in again.');
+    return {
+      url: `${CONFIG.supabaseUrl}/functions/v1/run-phase`,
+      headers: { 'Content-Type': 'application/json', apikey: CONFIG.supabaseAnonKey, Authorization: `Bearer ${token}` }
+    };
+  }
+  if (!state.apiKey) {
+    throw Object.assign(new RunError('Add your Anthropic API key in Settings first.'), { needsKey: true });
+  }
+  return {
+    url: 'https://api.anthropic.com/v1/messages',
+    headers: {
       'Content-Type': 'application/json',
       'x-api-key': state.apiKey,
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true'
-    };
-  }
+    }
+  };
+}
 
-  return callModel({ url, headers, body, signal, onText, onSearch, onRetry });
+async function extractBrief(request) {
+  const { url, headers } = await apiTarget();
+  const body = {
+    model: INTAKE_MODEL,
+    max_tokens: 3000,
+    stream: true,
+    system: INTAKE_SYSTEM,
+    messages: [{ role: 'user', content: buildIntakePrompt(request) }]
+  };
+  if (USE_SUPABASE) body.phase = 'intake';
+  const result = await callModel({ url, headers, body });
+  return { ...parseIntake(result.text), usage: result.usage };
 }
 
 async function savePhaseOutput(project, phaseId, text, edited) {
@@ -145,10 +167,24 @@ function renderBrief() {
   const p = current();
   if (!p) return renderEmpty();
   const b = p.brief || {};
+  const briefEmpty = !FIELDS.some(([k]) => b[k]) && !b.notes;
   $('view').innerHTML = `
     <h1>Project brief</h1>
     <p class="sub">Everything the agent knows about this job. Each phase reads it and writes back to it.</p>
-    <div class="card stack">
+    <details class="card intake" ${briefEmpty || b.request ? 'open' : ''}>
+      <summary>Start from a client request</summary>
+      <div class="stack" style="margin-top:14px">
+        <p class="meta" style="margin:0">Paste the whole job post or message, from Upwork, email or chat. The agent fills in
+        the fields below for you to check, and lists anything the client didn't say.</p>
+        <textarea id="f-request" rows="8" placeholder="Paste the client's request here">${esc(b.request || '')}</textarea>
+        <div class="row">
+          <button class="btn btn-go" id="extract">Fill in the brief</button>
+          <span class="meta" style="margin:0">Uses Claude Haiku 4.5, usually under $0.01. Nothing is saved until you click Save brief.</span>
+        </div>
+        <div id="intake-msg"></div>
+      </div>
+    </details>
+    <div class="card stack" style="margin-top:16px">
       <div><label for="f-name">Project name</label><input id="f-name" value="${esc(p.name)}"></div>
       <div class="grid2">
         ${FIELDS.map(([k, label, ph]) => `<div><label for="f-${k}">${label}</label><input id="f-${k}" value="${esc(b[k] || '')}" placeholder="${esc(ph)}"></div>`).join('')}
@@ -163,9 +199,55 @@ function renderBrief() {
     p.name = $('f-name').value.trim() || 'Untitled project';
     for (const [k] of FIELDS) p.brief[k] = $(`f-${k}`).value.trim();
     p.brief.notes = $('f-notes').value.trim();
+    p.brief.request = $('f-request').value.trim();
     persist('project', p); renderRail();
     $('saved').textContent = 'Saved';
+    document.querySelectorAll('.filled').forEach(el => el.classList.remove('filled'));
     setTimeout(() => { const el = $('saved'); if (el) el.textContent = ''; }, 2000);
+  };
+
+  $('extract').onclick = async () => {
+    const request = $('f-request').value.trim();
+    const msg = $('intake-msg');
+    if (request.length < 20) {
+      msg.innerHTML = '<div class="err">Paste the client\'s request first. A sentence or two is enough to start.</div>';
+      return;
+    }
+    const button = $('extract');
+    button.disabled = true;
+    button.textContent = 'Reading the request…';
+    msg.innerHTML = '';
+    try {
+      const { fields, questions } = await extractBrief(request);
+      if (!$('f-name')) return; // moved to another screen while it ran
+
+      const set = (id, value) => {
+        const el = $(id);
+        if (!value || !el) return false;
+        el.value = value;
+        el.classList.add('filled');
+        return true;
+      };
+      let count = 0;
+      if (set('f-name', fields.name)) count++;
+      for (const [k] of FIELDS) if (set(`f-${k}`, fields[k])) count++;
+      if (set('f-notes', notesWithQuestions(fields.notes, questions))) count++;
+
+      const missing = FIELDS.filter(([k]) => !fields[k]).map(([, label]) => label.toLowerCase());
+      msg.innerHTML = `<div class="note">
+        Filled ${count} ${count === 1 ? 'field' : 'fields'}. Check them below, then click Save brief.
+        ${missing.length ? `<br>Not in the request: ${esc(missing.join(', '))}.` : ''}
+        ${questions.length ? `<br>${questions.length} open ${questions.length === 1 ? 'question was' : 'questions were'} added to the notes.` : ''}
+      </div>`;
+      $('f-name').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (e) {
+      if (!$('intake-msg')) return;
+      $('intake-msg').innerHTML = `<div class="err">${esc(e.message)}
+        ${e.needsKey ? '<div class="row" style="margin-top:10px"><button class="btn" id="open-settings">Open Settings</button></div>' : ''}</div>`;
+      if ($('open-settings')) $('open-settings').onclick = settings;
+    } finally {
+      if ($('extract')) { $('extract').disabled = false; $('extract').textContent = 'Fill in the brief'; }
+    }
   };
 }
 
@@ -424,7 +506,8 @@ function exportProject() {
   if (!p) return;
   const b = p.brief || {};
   const brief = FIELDS.filter(([k]) => b[k]).map(([k, l]) => `- **${l}:** ${b[k]}`).join('\n');
-  const parts = [`# ${p.name}\n`, '## Brief\n', brief || '_Empty_', b.notes ? `\n\n**Notes:** ${b.notes}` : '', '\n'];
+  const parts = [`# ${p.name}\n`, '## Brief\n', brief || '_Empty_', b.notes ? `\n\n**Notes:** ${b.notes}` : '',
+    b.request ? `\n\n## Original client request\n\n${b.request.split('\n').map(l => `> ${l}`).join('\n')}` : '', '\n'];
   for (const ph of PHASES) if (p.outputs[ph.id]) parts.push(`\n---\n\n# ${ph.name}\n\n${p.outputs[ph.id]}\n`);
   const blob = new Blob([parts.join('')], { type: 'text/markdown' });
   const a = document.createElement('a');
