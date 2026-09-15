@@ -134,3 +134,10 @@ returns bigint language sql stable as $$
   from usage_log
   where user_id = uid and created_at >= date_trunc('month', now());
 $$;
+
+-- Table permissions for signed-in users. Newer Supabase projects don't grant these
+-- automatically; row-level security above still limits every row to its owner.
+grant select, insert, update, delete on studio_docs, projects, phase_runs to authenticated;
+grant select on profiles, usage_log to authenticated;
+grant execute on function tokens_used_this_month(uuid) to authenticated;
+revoke all on allowlist from anon, authenticated;
