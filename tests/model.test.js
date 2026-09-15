@@ -37,7 +37,8 @@ const fakeFetch = (responses) => {
   return { impl, calls };
 };
 
-const baseArgs = { url: 'https://x', headers: {}, body: { model: 'm', messages: [{ role: 'user', content: 'brief' }] } };
+// No automatic retries unless a test asks for them.
+const baseArgs = { url: 'https://x', headers: {}, retryDelays: [], body: { model: 'm', messages: [{ role: 'user', content: 'brief' }] } };
 
 test('picks the web search tool version for the model', () => {
   assert.equal(webSearchTool('claude-sonnet-4-6').type, 'web_search_20260209');
@@ -92,6 +93,27 @@ test('resumes a paused web search turn and sends the partial turn back', async (
   assert.equal(result.text, 'Searching trends\n\n## Findings');
 });
 
+test('searches run from code execution keep their prefilled query', async () => {
+  const events = [
+    { type: 'message_start', message: {} },
+    { type: 'content_block_start', index: 0, content_block: { type: 'server_tool_use', id: 'srv_0', name: 'code_execution', input: {} } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"code":"await web_search(...)"}' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'content_block_start', index: 1, content_block: { type: 'server_tool_use', id: 'srv_1', name: 'web_search', input: { query: 'fall 2026 candle trends' } } },
+    { type: 'content_block_stop', index: 1 },
+    { type: 'content_block_start', index: 2, content_block: { type: 'web_search_tool_result', tool_use_id: 'srv_1', content: [] } },
+    { type: 'content_block_stop', index: 2 },
+    { type: 'message_delta', delta: { stop_reason: 'pause_turn' } }
+  ];
+  const { impl, calls } = fakeFetch([new Response(sse(events)), new Response(sse(textTurn(['## Done'])))]);
+  const searches = [];
+  await callModel({ ...baseArgs, fetchImpl: impl, onSearch: q => searches.push(q) });
+  assert.deepEqual(searches, ['fall 2026 candle trends']);
+  const sent = calls[1].messages[1].content;
+  assert.deepEqual(sent[0].input, { code: 'await web_search(...)' });
+  assert.deepEqual(sent[1].input, { query: 'fall 2026 candle trends' });
+});
+
 test('citations are kept on text blocks for resumed turns', () => {
   const blocks = [{ type: 'text', text: '', citations: [] }, undefined, { type: 'text', text: 'x', citations: [{ url: 'u' }] }];
   assert.deepEqual(cleanBlocks(blocks), [{ type: 'text', text: 'x', citations: [{ url: 'u' }] }]);
@@ -115,6 +137,21 @@ test('a dropped connection keeps the text written so far', async () => {
   });
 });
 
+test('a stream that goes quiet is stopped and keeps its partial text', async () => {
+  const head = textTurn(['Written before the stall.']).slice(0, 3);
+  const enc = new TextEncoder();
+  const quiet = new ReadableStream({
+    start(c) { c.enqueue(enc.encode(head.map(e => `data: ${JSON.stringify(e)}\n\n`).join(''))); } // then nothing
+  });
+  const { impl } = fakeFetch([new Response(quiet)]);
+  await assert.rejects(callModel({ ...baseArgs, fetchImpl: impl, idleMs: 50 }), e => {
+    assert.match(e.message, /went quiet for 0 seconds/);
+    assert.equal(e.partial, 'Written before the stall.');
+    assert.equal(e.aborted, false);
+    return true;
+  });
+});
+
 test('stopping a run is reported as aborted, not as an error', async () => {
   const abort = Object.assign(new Error('aborted'), { name: 'AbortError' });
   const { impl } = fakeFetch([abort]);
@@ -130,6 +167,38 @@ test('error events mid-stream fail the run', async () => {
   const events = [...textTurn(['Some']).slice(0, 3), { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }];
   const { impl } = fakeFetch([new Response(sse(events))]);
   await assert.rejects(callModel({ ...baseArgs, fetchImpl: impl }), e => e.message === 'Overloaded' && e.partial === 'Some');
+});
+
+test('retries an overloaded stream and discards its half-written text', async () => {
+  const overloaded = [...textTurn(['Half a sen']).slice(0, 3), { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }];
+  const { impl, calls } = fakeFetch([new Response(sse(overloaded)), new Response(sse(textTurn(['Full answer'])))]);
+  const seen = [], retries = [];
+  const result = await callModel({
+    ...baseArgs, retryDelays: [0, 0], fetchImpl: impl,
+    onText: t => seen.push(t), onRetry: (n, ms, reason) => retries.push([n, reason])
+  });
+  assert.equal(result.text, 'Full answer');
+  assert.equal(calls.length, 2);
+  assert.deepEqual(retries, [[1, 'Overloaded']]);
+  assert.ok(seen.includes(''), 'display rewinds before the retry');
+});
+
+test('retries rate limits and server errors, but not bad requests', async () => {
+  const status = s => new Response(JSON.stringify({ error: { message: `status ${s}` } }), { status: s });
+  const retried = fakeFetch([status(529), status(429), new Response(sse(textTurn(['ok'])))]);
+  assert.equal((await callModel({ ...baseArgs, retryDelays: [0, 0, 0], fetchImpl: retried.impl })).text, 'ok');
+  assert.equal(retried.calls.length, 3);
+
+  const notRetried = fakeFetch([status(400), new Response(sse(textTurn(['never'])))]);
+  await assert.rejects(callModel({ ...baseArgs, retryDelays: [0, 0, 0], fetchImpl: notRetried.impl }), /status 400/);
+  assert.equal(notRetried.calls.length, 1);
+});
+
+test('gives up after the last retry and keeps the partial text', async () => {
+  const overloaded = () => new Response(sse([...textTurn(['Some text']).slice(0, 3), { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }]));
+  const { impl, calls } = fakeFetch([overloaded(), overloaded(), overloaded()]);
+  await assert.rejects(callModel({ ...baseArgs, retryDelays: [0, 0], fetchImpl: impl }), e => e.message === 'Overloaded' && e.partial === 'Some text');
+  assert.equal(calls.length, 3);
 });
 
 test('an empty response is an error', async () => {

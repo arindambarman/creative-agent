@@ -32,9 +32,14 @@ export const PHASES = [
     search: true,
     prompt: `Research and angle for this project. Two parts.
 
+Do all your searching before you write, without commentary. Your reply starts with the
+"Category landscape" heading — no lines about what you are about to search or have found.
+
 ## Category landscape
 Search for what visual content is working right now for this product category and audience.
-Report what you actually find, with the source and date for each point. Cover:
+Report what you actually find. After every factual point, name the source and its publication
+month in brackets, for example (Vogue Business, August 2026). Prefer sources from the last
+twelve months, and say when a point rests on something older. Cover:
 - Visual treatments appearing repeatedly in this category
 - Formats and lengths that perform on the platforms in the brief
 - What looks tired or overused right now, and is worth avoiding
@@ -48,7 +53,10 @@ Separate from trends: what do these visuals actually need to do to make someone 
 - One sentence stating the angle, plain enough to put in front of the client
 
 ## Questions before we go further
-Anything missing from the brief that would change the direction.`
+Anything missing from the brief that would change the direction.
+
+## Sources
+Every source cited above, one per line, as a markdown link with its publication month.`
   },
   {
     id: 'direct',
@@ -150,6 +158,12 @@ Write everything in the designer's own voice, per their brand voice document. Se
 no hype words, no "elevate your brand". Build the story around decisions made during this
 project, not adjectives about the result.
 
+Only state what the work so far actually records. Plans are not outcomes: if an earlier phase
+says a choice depends on something (the client's photos, a test, a client reply), do not write
+as though it went one way. Put a short placeholder in square brackets for the designer to fill,
+for example [which path the jar took: 2D composite or Blender] or [client feedback]. The same
+goes for results, numbers, and anything the client said.
+
 ## Case study
 Problem, approach, key decisions, result. Around 200 words. The decisions are the interesting
 part — why a frame was built in 3D, why one direction won over the other.
@@ -177,8 +191,9 @@ Suggested posting order across platforms, and hashtags.`
   }
 ];
 
-export function buildMessage(phase, project, docs, priorOutputs) {
+export function buildMessage(phase, project, docs, priorOutputs, today = new Date()) {
   const brief = project.brief || {};
+  const dateLine = today.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const fields = [
     ['Client', brief.client],
     ['Product', brief.product],
@@ -209,6 +224,8 @@ ${docs.work || '(not filled in yet)'}
 ${docs.tools || '(not filled in yet)'}
 
 # Project brief
+
+Today's date: ${dateLine}. Use it when judging deadlines and how recent a source is.
 
 ${fields || '(the brief is empty — ask for what you need)'}
 ${prior ? `\n# Work so far\n${prior}` : ''}

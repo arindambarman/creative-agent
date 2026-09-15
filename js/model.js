@@ -7,6 +7,9 @@
 // No DOM access and fetch is injectable, so this can be tested in Node.
 
 const MAX_CONTINUATIONS = 5;
+const RETRY_DELAYS_MS = [2000, 5000, 10000];
+const RETRYABLE_STATUS = [429, 500, 502, 503, 504, 529];
+const RETRYABLE_ERROR_TYPES = ['overloaded_error', 'api_error', 'rate_limit_error'];
 
 export class RunError extends Error {
   constructor(message, partial = '', aborted = false) {
@@ -82,17 +85,27 @@ export function applyEvent(turn, ev, on = {}) {
     case 'content_block_stop': {
       const block = turn.blocks[ev.index];
       if (block && '_json' in block) {
-        try { block.input = JSON.parse(block._json || '{}'); } catch (e) { block.input = {}; }
+        // Searches run from code execution arrive with input already filled in and no deltas.
+        if (block._json) {
+          try { block.input = JSON.parse(block._json); } catch (e) { block.input = block.input ?? {}; }
+        } else {
+          block.input = block.input ?? {};
+        }
         delete block._json;
-        if (block.type === 'server_tool_use' && block.input?.query) on.search?.(block.input.query);
+        if (block.type === 'server_tool_use' && block.name === 'web_search' && block.input.query) {
+          on.search?.(block.input.query);
+        }
       }
       break;
     }
     case 'message_delta':
       turn.stopReason = ev.delta?.stop_reason ?? turn.stopReason;
       break;
-    case 'error':
-      throw new Error(ev.error?.message || 'The model returned an error.');
+    case 'error': {
+      const err = new Error(ev.error?.message || 'The model returned an error.');
+      err.retryable = RETRYABLE_ERROR_TYPES.includes(ev.error?.type);
+      throw err;
+    }
   }
 }
 
@@ -107,36 +120,78 @@ function toRunError(e, partial) {
   if (e instanceof RunError) return e;
   if (e?.name === 'AbortError') return new RunError('Run stopped.', partial, true);
   if (e instanceof TypeError) {
-    return new RunError(`Lost the connection to the server (${e.message}). Check your connection and run again.`, partial);
+    const err = new RunError(`Lost the connection to the server (${e.message}). Check your connection and run again.`, partial);
+    err.retryable = true;
+    return err;
   }
-  return new RunError(e?.message || 'The run failed for an unknown reason.', partial);
+  const err = new RunError(e?.message || 'The run failed for an unknown reason.', partial);
+  err.retryable = Boolean(e?.retryable);
+  return err;
 }
 
-export async function callModel({ url, headers, body, signal, onText, onSearch, fetchImpl = fetch }) {
-  const messages = [...body.messages];
-  let text = '', lastType = null;
+function wait(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', stop); resolve(); }, ms);
+    const stop = () => { clearTimeout(timer); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); };
+    signal?.addEventListener('abort', stop, { once: true });
+  });
+}
 
-  for (let attempt = 0; ; attempt++) {
+// Rejects if `promise` doesn't settle within `ms`. The API sends ping events while it works,
+// so a long silence means the connection has stalled rather than the model being slow.
+function withIdleLimit(promise, ms, onStall) {
+  let timer;
+  const stall = new Promise((_, reject) => {
+    // Reject before cleaning up: cancelling a reader settles its pending read at once.
+    timer = setTimeout(() => { reject(new StallError()); onStall?.(); }, ms);
+  });
+  return Promise.race([promise, stall]).finally(() => clearTimeout(timer));
+}
+
+class StallError extends Error {}
+
+// One request and its stream. Throws a RunError carrying the text so far on any failure.
+async function requestTurn({ url, headers, body, messages, signal, onText, onSearch, fetchImpl, idleMs, text, lastType }) {
+  const stalled = partial => new RunError(
+    `The connection went quiet for ${Math.round(idleMs / 1000)} seconds, so the run was stopped. Run again, or keep what was written.`,
+    partial
+  );
+  // One controller per request, so a stall can cancel it while Stop still works.
+  const ctrl = new AbortController();
+  const forwardAbort = () => ctrl.abort();
+  signal?.addEventListener('abort', forwardAbort);
+  if (signal?.aborted) ctrl.abort();
+
+  const turn = createTurn(text, lastType);
+  try {
     let res;
     try {
-      res = await fetchImpl(url, { method: 'POST', headers, body: JSON.stringify({ ...body, messages }), signal });
+      res = await withIdleLimit(
+        fetchImpl(url, { method: 'POST', headers, body: JSON.stringify({ ...body, messages }), signal: ctrl.signal }),
+        idleMs, () => ctrl.abort()
+      );
     } catch (e) {
-      throw toRunError(e, text);
+      throw e instanceof StallError ? stalled(text) : toRunError(e, text);
     }
     if (!res.ok) {
       let detail = '';
       const raw = await res.text().catch(() => '');
       try { detail = JSON.parse(raw)?.error?.message || raw; } catch (e) { detail = raw; }
-      throw new RunError(`Request failed (${res.status}). ${detail}`.trim(), text);
+      const err = new RunError(`Request failed (${res.status}). ${detail}`.trim(), text);
+      err.retryable = RETRYABLE_STATUS.includes(res.status);
+      throw err;
     }
 
-    const turn = createTurn(text, lastType);
     try {
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = '';
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await withIdleLimit(reader.read(), idleMs, () => {
+          ctrl.abort();
+          reader.cancel().catch(() => {});
+        });
         if (done) break;
         buf += dec.decode(value, { stream: true });
         const { events, rest } = splitEvents(buf);
@@ -145,7 +200,34 @@ export async function callModel({ url, headers, body, signal, onText, onSearch, 
       }
       if (buf.trim()) for (const ev of splitEvents(buf + '\n').events) applyEvent(turn, ev, { text: onText, search: onSearch });
     } catch (e) {
-      throw toRunError(e, turn.text);
+      throw e instanceof StallError ? stalled(turn.text) : toRunError(e, turn.text);
+    }
+    return turn;
+  } finally {
+    signal?.removeEventListener('abort', forwardAbort);
+  }
+}
+
+export async function callModel({
+  url, headers, body, signal, onText, onSearch, onRetry,
+  fetchImpl = fetch, idleMs = 120000, retryDelays = RETRY_DELAYS_MS
+}) {
+  const messages = [...body.messages];
+  let text = '', lastType = null;
+
+  for (let attempt = 0; ; attempt++) {
+    let turn;
+    for (let retry = 0; ; retry++) {
+      try {
+        turn = await requestTurn({ url, headers, body, messages, signal, onText, onSearch, fetchImpl, idleMs, text, lastType });
+        break;
+      } catch (e) {
+        if (!e.retryable || retry >= retryDelays.length) throw e;
+        // Discard this request's half-written turn and send the same request again.
+        onText?.(text);
+        onRetry?.(retry + 1, retryDelays[retry], e.message);
+        try { await wait(retryDelays[retry], signal); } catch (abort) { throw new RunError('Run stopped.', e.partial || text, true); }
+      }
     }
     text = turn.text;
     lastType = turn.lastType;

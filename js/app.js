@@ -1,7 +1,7 @@
 import { CONFIG, USE_SUPABASE } from './config.js';
 import { PHASES, SYSTEM, buildMessage } from './phases.js';
 import { store, newId } from './store.js';
-import { md, esc } from './markdown.js';
+import { md, esc, stripPreamble } from './markdown.js';
 import { callModel, webSearchTool, RunError } from './model.js';
 
 const $ = id => document.getElementById(id);
@@ -45,7 +45,7 @@ async function newProject() {
 
 // ---- Model call -------------------------------------------------------------
 
-async function runPhase(project, phase, { signal, onText, onSearch }) {
+async function runPhase(project, phase, { signal, onText, onSearch, onRetry }) {
   const prior = {};
   for (const p of PHASES) { if (p.id === phase.id) break; if (project.outputs[p.id]) prior[p.id] = project.outputs[p.id]; }
   const message = buildMessage(phase, project, state.docs, prior);
@@ -77,7 +77,7 @@ async function runPhase(project, phase, { signal, onText, onSearch }) {
     };
   }
 
-  return callModel({ url, headers, body, signal, onText, onSearch });
+  return callModel({ url, headers, body, signal, onText, onSearch, onRetry });
 }
 
 async function savePhaseOutput(project, phaseId, text, edited) {
@@ -226,9 +226,15 @@ async function doRun(phase) {
         searches.push(query);
         const el = $('activity');
         if (el && showing(p, phase)) el.textContent = `Searched: ${searches.join(' · ')}`;
+      },
+      onRetry: (n, ms, reason) => {
+        const el = $('activity');
+        if (el && showing(p, phase)) el.textContent = `${reason}. Trying again in ${Math.round(ms / 1000)} seconds (retry ${n} of 3).`;
       }
     });
-    await savePhaseOutput(p, phase.id, result.text, false);
+    // Research runs narrate between searches; the saved output starts at the first heading.
+    const text = phase.search ? stripPreamble(result.text) : result.text;
+    await savePhaseOutput(p, phase.id, text, false);
     if (result.incomplete) phaseNotice = { phaseId: phase.id, text: INCOMPLETE[result.stopReason] };
     running = null;
     renderRail();

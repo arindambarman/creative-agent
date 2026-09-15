@@ -88,7 +88,21 @@ Working and tested:
 - Long runs: web search `pause_turn` is resumed automatically (up to 5 times), length-limit and
   refusal stops show a notice, Stop aborts a run, and partial text from a stopped or dropped run
   can be kept.
+- Failures: overloaded, rate-limit, server errors and dropped connections retry up to 3 times
+  (2, 5, 10 seconds), discarding that request's half-written text. A stream silent for 2 minutes
+  is stopped rather than left hanging.
+- Every prompt includes today's date, so deadlines and source recency are judged correctly.
 - Unit tests for streaming and markdown. Browser-tested with a stubbed `fetch`.
+- All five phases run against the real API (claude-sonnet-4-6) with a test brief on
+  14 September 2026. That run surfaced the date, sourcing, invented-outcome and stall issues fixed
+  above.
+
+Lessons from the real run, worth keeping in mind when editing prompts:
+- With `web_search_20260209`, searches run inside code execution: `server_tool_use` blocks named
+  `web_search` arrive with `input` already filled, and no `citations` are returned. Sources only
+  appear if the prompt asks for them in the text.
+- Publish will write plans up as finished results unless told plainly that it may not.
+- Research connections can drop mid-search; the retry covers it, but Discover is the slowest phase.
 - Sign-in screen renders and validates, tested with a stubbed Supabase client.
 
 Written but not yet tested against a live Supabase project:
@@ -105,8 +119,8 @@ Written but not yet tested against a live Supabase project:
 3. **Side-by-side comparison** of two history versions.
 4. **Markdown renderer** in `js/markdown.js` is deliberately minimal. Extend it rather than adding
    a library, unless there's a strong reason.
-5. Automatic retry on overloaded or rate-limit errors. Today the error shows and the person runs
-   again.
+5. **Resuming a dropped research run.** A retry restarts the current request from scratch, so a
+   Discover run that drops late repeats its searches. Worth revisiting if drops stay common.
 
 ## Things not to do
 

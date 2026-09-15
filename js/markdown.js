@@ -10,6 +10,17 @@ const inline = t => esc(t)
   .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
   .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 
+// Drops a short lead-in ("Now I have enough research…") and any rule after it, when the
+// real content starts at a heading. Longer text before the first heading is left alone.
+export function stripPreamble(src, maxChars = 300) {
+  const text = String(src ?? '');
+  const m = text.match(/^#{1,4}\s/m);
+  if (!m || m.index === 0) return text;
+  const lead = text.slice(0, m.index);
+  if (lead.trim().length > maxChars) return text;
+  return text.slice(m.index);
+}
+
 export function md(src) {
   const lines = String(src ?? '').split('\n');
   let out = '', list = null, table = null, quote = false, fence = null;

@@ -1,6 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { md, esc } from '../js/markdown.js';
+import { md, esc, stripPreamble } from '../js/markdown.js';
+
+test('strips a short lead-in before the first heading', () => {
+  assert.equal(stripPreamble('Now I have enough research. Let me write the full response.\n\n---\n\n## Category landscape\nText'),
+    '## Category landscape\nText');
+  assert.equal(stripPreamble('## Already clean\nText'), '## Already clean\nText');
+  assert.equal(stripPreamble('No headings at all.'), 'No headings at all.');
+  const long = 'A real opening paragraph. '.repeat(20) + '\n## Heading';
+  assert.equal(stripPreamble(long), long);
+});
 
 test('escapes html in model text', () => {
   assert.equal(esc('<img src=x onerror="a">&'), '&lt;img src=x onerror=&quot;a&quot;&gt;&amp;');
