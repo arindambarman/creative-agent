@@ -71,9 +71,12 @@ alter table phase_runs   enable row level security;
 alter table allowlist    enable row level security;
 alter table usage_log    enable row level security;
 
+-- Read-only for users: the monthly budget lives here, so only the owner (in the SQL editor)
+-- or the service role may change it. The profile row itself is created by handle_new_user().
 drop policy if exists own_profile on profiles;
-create policy own_profile on profiles
-  for all using (auth.uid() = id) with check (auth.uid() = id);
+drop policy if exists read_own_profile on profiles;
+create policy read_own_profile on profiles
+  for select using (auth.uid() = id);
 
 drop policy if exists own_docs on studio_docs;
 create policy own_docs on studio_docs

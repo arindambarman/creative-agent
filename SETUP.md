@@ -41,10 +41,24 @@ shared API key that never touches the browser.
 
 ### 1. Create the project
 Create a project at [supabase.com](https://supabase.com). From **Project Settings → API**, copy
-the project URL and the `anon` public key.
+the project URL and the `anon` public key. Note the project ref too: it's the `xxxxxxxx` in
+`https://xxxxxxxx.supabase.co`.
 
 ### 2. Create the tables
-Open the **SQL editor**, paste the contents of `supabase/schema.sql`, and run it.
+Open the **SQL editor**, paste the contents of `supabase/schema.sql`, and run it. It's safe to
+run again after pulling changes to the schema.
+
+### 2b. Tell Supabase where sign-in links should go
+In **Authentication → URL Configuration**:
+
+- **Site URL:** `https://you.github.io/creative-agent/`
+- **Redirect URLs:** add the same address, plus `http://localhost:8000/` if you test locally.
+
+Without this, the magic link in the sign-in email sends people to `localhost:3000` and sign-in
+never completes.
+
+Supabase's built-in email sender only allows a few sign-in emails an hour. That's fine for two
+or three people; for more, add your own SMTP server under **Authentication → Emails**.
 
 ### 3. Add yourself to the allowlist
 Nobody can sign in until their email is listed. In the SQL editor:
@@ -57,24 +71,24 @@ insert into allowlist (email) values
 
 ### 4. Deploy the edge function
 
+From this folder, using `npx` so nothing needs installing globally:
+
 ```bash
-npm install -g supabase
-supabase login
-supabase link --project-ref <your-project-ref>
-supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
-supabase functions deploy run-phase
+npx supabase login
+npx supabase link --project-ref <your-project-ref>
+npx supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
+npx supabase functions deploy run-phase
 ```
 
 ### 5. Point the app at it
-In `js/config.js`:
+In `js/config.js`, fill in the two empty values and leave the rest as it is:
 
 ```js
-export const CONFIG = {
   supabaseUrl: 'https://xxxxxxxx.supabase.co',
   supabaseAnonKey: 'eyJhbGci...',
-  model: 'claude-sonnet-4-6'
-};
 ```
+
+Commit and push. The header badge changes from `local` to `supabase` and a sign-in screen appears.
 
 The anon key is safe to commit. It only allows what row-level security permits, and every table
 filters by the signed-in user.
