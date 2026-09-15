@@ -52,6 +52,7 @@ Two run modes, chosen by whether `js/config.js` has Supabase credentials:
 | `js/phases.js` | **The agent itself.** System prompt, five phase prompts, prompt assembly. |
 | `js/model.js` | Messages API streaming: resumes `pause_turn`, flags truncation, keeps partial text on failure. No DOM. |
 | `js/markdown.js` | `md()` renderer, `esc()`, `stripPreamble()`. No DOM. |
+| `js/document.js` | Export: builds the project document, a .docx (hand-written XML in a stored zip, no library), and the print page used for PDF. No DOM. |
 | `js/intake.js` | Turns a pasted client request into brief fields: prompt, JSON parsing, open questions. No DOM. |
 | `tests/*.test.js` | Unit tests for `model.js` and `markdown.js`, run with Node's built-in runner. |
 | `js/store.js` | Storage adapter: local and Supabase backends behind one interface. |
@@ -93,6 +94,12 @@ Working and tested:
   (2, 5, 10 seconds), discarding that request's half-written text. A stream silent for 2 minutes
   is stopped rather than left hanging.
 - Every prompt includes today's date, so deadlines and source recency are judged correctly.
+- Export: Export project offers PDF (browser print dialog on a print-styled page, "Save as PDF"),
+  Word (.docx) and Markdown. All three contain a cover, the brief, the original request, and
+  each completed phase on a new page. The .docx was checked by opening it in Microsoft Word
+  (34 pages, 8 tables, 14 links, correct heading outline) and reading it with python-docx.
+  WordprocessingML is order-sensitive (e.g. `w:rStyle` must be first in `w:rPr`, `w:shd` before
+  `w:spacing` in `w:pPr`): check the schema order when adding formatting, and re-test in Word.
 - Client request intake: on the Brief screen, a pasted job post (Upwork, email, chat) is read by
   Claude Haiku 4.5 (about $0.003) and fills the form for review. Nothing saves until Save brief.
   Unstated fields stay empty and become "Not stated in the request" questions in the notes;

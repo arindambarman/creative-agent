@@ -4,6 +4,7 @@ import { store, newId } from './store.js';
 import { md, esc, stripPreamble } from './markdown.js';
 import { callModel, webSearchTool, costOf, RunError } from './model.js';
 import { INTAKE_MODEL, INTAKE_SYSTEM, buildIntakePrompt, parseIntake, notesWithQuestions } from './intake.js';
+import { projectDocument, buildDocx, buildPrintHtml, fileSlug } from './document.js';
 
 const currentModel = () => modelInfo(state.model);
 
@@ -501,20 +502,70 @@ function settings() {
   $('modal').onclick = e => { if (e.target.id === 'modal') close(); };
 }
 
+function download(data, filename, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([data], { type }));
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000); // revoking at once cancels the download in some browsers
+}
+
+function exportMarkdown(p) {
+  const doc = projectDocument(p, PHASES, FIELDS);
+  const text = [`# ${doc.title}`, doc.subtitle, doc.date, ...doc.sections.map(s => `---\n\n# ${s.title}\n\n${s.markdown}`)]
+    .filter(Boolean).join('\n\n') + '\n';
+  download(text, `${fileSlug(p.name)}.md`, 'text/markdown');
+}
+
+function exportWord(p) {
+  download(buildDocx(projectDocument(p, PHASES, FIELDS)), `${fileSlug(p.name)}.docx`,
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+}
+
+// Opens the browser's print dialog on a print-styled copy; choosing "Save as PDF" there makes
+// a PDF with real, selectable text and no library needed.
+function exportPdf(p) {
+  const frame = document.createElement('iframe');
+  frame.setAttribute('aria-hidden', 'true');
+  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  frame.onload = () => {
+    frame.contentWindow.focus();
+    frame.contentWindow.print();
+    setTimeout(() => frame.remove(), 60000);
+  };
+  frame.srcdoc = buildPrintHtml(projectDocument(p, PHASES, FIELDS));
+  document.body.appendChild(frame);
+}
+
 function exportProject() {
   const p = current();
-  if (!p) return;
-  const b = p.brief || {};
-  const brief = FIELDS.filter(([k]) => b[k]).map(([k, l]) => `- **${l}:** ${b[k]}`).join('\n');
-  const parts = [`# ${p.name}\n`, '## Brief\n', brief || '_Empty_', b.notes ? `\n\n**Notes:** ${b.notes}` : '',
-    b.request ? `\n\n## Original client request\n\n${b.request.split('\n').map(l => `> ${l}`).join('\n')}` : '', '\n'];
-  for (const ph of PHASES) if (p.outputs[ph.id]) parts.push(`\n---\n\n# ${ph.name}\n\n${p.outputs[ph.id]}\n`);
-  const blob = new Blob([parts.join('')], { type: 'text/markdown' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `${p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'project'}.md`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  if (!p) return flash('Open a project first, then export it.');
+  const done = PHASES.filter(ph => p.outputs[ph.id]);
+  $('modal-root').innerHTML = `<div class="modal" id="modal"><div class="card stack">
+    <h2>Export project</h2>
+    <p class="sub" style="margin:0">${esc(p.name)}: the brief${p.brief?.request ? ', the original client request' : ''} and
+      ${done.length ? `${done.length} ${done.length === 1 ? 'phase' : 'phases'} (${esc(done.map(ph => ph.name).join(', '))})` : 'no phases yet'}.
+      Each phase starts on a new page.</p>
+    ${done.length < PHASES.length ? `<p class="note" style="margin:0">Phases that haven't run are left out. Run them first for a complete document.</p>` : ''}
+    <div class="export-options">
+      <button class="export-option" id="x-pdf"><strong>PDF</strong><span>Opens the print dialog. Choose "Save as PDF" as the printer.</span></button>
+      <button class="export-option" id="x-word"><strong>Word document</strong><span>A .docx file for Word, Google Docs or Pages.</span></button>
+      <button class="export-option" id="x-md"><strong>Markdown</strong><span>Plain text, for notes apps or version control.</span></button>
+    </div>
+    <div class="row"><button class="btn" id="x-close">Close</button></div>
+  </div></div>`;
+  const close = () => { $('modal-root').innerHTML = ''; };
+  const run = fn => () => {
+    try { fn(p); close(); }
+    catch (e) { flash(`Couldn't export: ${e.message}`); close(); }
+  };
+  $('x-pdf').onclick = run(exportPdf);
+  $('x-word').onclick = run(exportWord);
+  $('x-md').onclick = run(exportMarkdown);
+  $('x-close').onclick = close;
+  $('modal').onclick = e => { if (e.target.id === 'modal') close(); };
 }
 
 document.addEventListener('click', e => {

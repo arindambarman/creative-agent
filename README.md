@@ -88,7 +88,7 @@ matches the storyboard, the 3D shot list, and the final captions.
 - Upload client photos, logos, and references directly into a project
 - Edit any output in place; your edits carry forward into later phases
 - Version history per phase, so you can compare attempts instead of losing the earlier one
-- Export the finished plan as markdown or PDF to send to a client
+- Export the whole project as one PDF, Word document or markdown file to send to a client
 
 ### Built for sharing
 - Static site on GitHub Pages — fork it and deploy in minutes
@@ -125,7 +125,7 @@ matches the storyboard, the 3D shot list, and the final captions.
 Planned, not yet built:
 - [x] Version history per phase, with restore
 - [ ] Side-by-side comparison of two versions
-- [ ] PDF export of the full project plan
+- [x] PDF and Word export of the full project plan
 - [ ] Per-user API keys and usage budgets
 - [ ] Moodboard generation from the chosen direction
 - [ ] Reusable project templates for recurring client types
