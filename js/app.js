@@ -28,6 +28,7 @@ let phaseNotice = null;  // { phaseId, text } shown once above a phase's output
 const current = () => state.projects.find(p => p.id === state.currentId) || null;
 
 // Every write goes through here so the two backends stay interchangeable.
+// Resolves true when the write succeeded.
 async function persist(kind, ...args) {
   try {
     if (kind === 'docs') await store.saveDocs(state);
@@ -36,10 +37,38 @@ async function persist(kind, ...args) {
     else if (kind === 'delete') await store.deleteProject(state, ...args);
     else await store.saveAll(state);
     if (store.mode === 'local') await store.saveAll(state);
+    return true;
   } catch (e) {
     flash(`Couldn't save: ${e.message}`);
+    return false;
   }
 }
+
+// ---- Brief auto-save ----------------------------------------------------------
+// The brief saves shortly after typing stops. Anything still waiting is saved before the
+// screen changes, before export, and when the page is closed.
+
+const BRIEF_SAVE_DELAY = 800;
+let briefTimer = null;
+let pendingBriefSave = null;
+
+function flushBriefSave() {
+  clearTimeout(briefTimer);
+  const save = pendingBriefSave;
+  pendingBriefSave = null;
+  return save ? save() : Promise.resolve(true);
+}
+
+function cancelBriefSave() {
+  clearTimeout(briefTimer);
+  pendingBriefSave = null;
+}
+
+window.addEventListener('beforeunload', e => {
+  if (!pendingBriefSave) return;
+  flushBriefSave();
+  e.preventDefault(); // a remote save may not finish before the page closes, so ask first
+});
 
 function flash(msg) {
   const el = $('flash');
@@ -180,7 +209,7 @@ function renderBrief() {
         <textarea id="f-request" rows="8" placeholder="Paste the client's request here">${esc(b.request || '')}</textarea>
         <div class="row">
           <button class="btn btn-go" id="extract">Fill in the brief</button>
-          <span class="meta" style="margin:0">Uses Claude Haiku 4.5, usually under $0.01. Nothing is saved until you click Save brief.</span>
+          <span class="meta" style="margin:0">Uses Claude Haiku 4.5, usually under $0.01. The request and the filled-in brief save automatically.</span>
         </div>
         <div id="intake-msg"></div>
       </div>
@@ -192,19 +221,44 @@ function renderBrief() {
       </div>
       <div><label for="f-notes">Notes, references, constraints</label>
         <textarea id="f-notes" rows="4" placeholder="Anything else: brand guidelines, references they liked, NDA status, whether the work can be posted publicly.">${esc(b.notes || '')}</textarea></div>
-      <div class="row"><button class="btn btn-go" id="save-brief">Save brief</button><span id="saved" class="meta"></span></div>
+      <div class="row"><button class="btn" id="save-brief">Save now</button>
+        <span id="saved" class="meta save-status" role="status" aria-live="polite">Changes save automatically</span></div>
     </div>
     <p class="note" style="margin-top:18px">The brief doesn't need to be complete. Each phase will tell you what it still needs.</p>`;
 
-  $('save-brief').onclick = () => {
+  const status = text => { if ($('saved')) $('saved').textContent = text; };
+
+  // Reads the form into the project straight away, before any await, so a save triggered by
+  // leaving the screen captures the values before the form is replaced.
+  const save = async () => {
+    if (!$('f-name')) return true;
+    p.brief ??= {};
     p.name = $('f-name').value.trim() || 'Untitled project';
     for (const [k] of FIELDS) p.brief[k] = $(`f-${k}`).value.trim();
     p.brief.notes = $('f-notes').value.trim();
     p.brief.request = $('f-request').value.trim();
-    persist('project', p); renderRail();
-    $('saved').textContent = 'Saved';
+    status('Saving…');
+    const ok = await persist('project', p);
+    renderRail();
+    status(ok ? 'All changes saved' : "Couldn't save. Your text is still here; try Save now.");
+    return ok;
+  };
+
+  const schedule = () => {
+    clearTimeout(briefTimer);
+    pendingBriefSave = save;
+    status('Unsaved changes…');
+    briefTimer = setTimeout(flushBriefSave, BRIEF_SAVE_DELAY);
+  };
+
+  for (const el of document.querySelectorAll('#f-name, #f-notes, #f-request, .grid2 input')) {
+    el.addEventListener('input', schedule);
+  }
+
+  $('save-brief').onclick = () => {
+    pendingBriefSave = save;
+    flushBriefSave();
     document.querySelectorAll('.filled').forEach(el => el.classList.remove('filled'));
-    setTimeout(() => { const el = $('saved'); if (el) el.textContent = ''; }, 2000);
   };
 
   $('extract').onclick = async () => {
@@ -220,7 +274,8 @@ function renderBrief() {
     msg.innerHTML = '';
     try {
       const { fields, questions } = await extractBrief(request);
-      if (!$('f-name')) return; // moved to another screen while it ran
+      // Moved to another screen or project while it ran: don't fill someone else's brief.
+      if (state.currentId !== p.id || view.screen !== 'brief' || !$('f-name')) return;
 
       const set = (id, value) => {
         const el = $(id);
@@ -234,9 +289,12 @@ function renderBrief() {
       for (const [k] of FIELDS) if (set(`f-${k}`, fields[k])) count++;
       if (set('f-notes', notesWithQuestions(fields.notes, questions))) count++;
 
+      pendingBriefSave = save;
+      const saved = await flushBriefSave();
+
       const missing = FIELDS.filter(([k]) => !fields[k]).map(([, label]) => label.toLowerCase());
       msg.innerHTML = `<div class="note">
-        Filled ${count} ${count === 1 ? 'field' : 'fields'}. Check them below, then click Save brief.
+        Filled ${count} ${count === 1 ? 'field' : 'fields'}${saved ? ' and saved the brief' : ''}. Check them below; any changes you make save as you type.
         ${missing.length ? `<br>Not in the request: ${esc(missing.join(', '))}.` : ''}
         ${questions.length ? `<br>${questions.length} open ${questions.length === 1 ? 'question was' : 'questions were'} added to the notes.` : ''}
       </div>`;
@@ -457,6 +515,7 @@ function renderEmpty() {
 }
 
 function render() {
+  flushBriefSave(); // reads the brief form now, before this render replaces it
   renderRail();
   if (!$('flash')) $('view').insertAdjacentHTML('beforebegin', '<div id="flash"></div>');
   if (view.screen === 'studio') return renderStudio();
@@ -540,6 +599,7 @@ function exportPdf(p) {
 }
 
 function exportProject() {
+  flushBriefSave();
   const p = current();
   if (!p) return flash('Open a project first, then export it.');
   const done = PHASES.filter(ph => p.outputs[ph.id]);
@@ -577,6 +637,8 @@ document.addEventListener('click', e => {
     const id = del.dataset.del;
     const proj = state.projects.find(x => x.id === id);
     if (confirm(`Delete "${proj?.name}"? This cannot be undone.`)) {
+      // A waiting brief save would recreate the project after it's deleted.
+      if (state.currentId === id) cancelBriefSave(); else flushBriefSave();
       state.projects = state.projects.filter(x => x.id !== id);
       if (state.currentId === id) state.currentId = state.projects[0]?.id || null;
       persist('delete', id).then(render);

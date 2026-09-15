@@ -100,8 +100,13 @@ Working and tested:
   (34 pages, 8 tables, 14 links, correct heading outline) and reading it with python-docx.
   WordprocessingML is order-sensitive (e.g. `w:rStyle` must be first in `w:rPr`, `w:shd` before
   `w:spacing` in `w:pPr`): check the schema order when adding formatting, and re-test in Word.
+- Brief auto-save: the brief form and pasted request save 800 ms after typing stops, with a
+  status line. `render()`, export and page close flush a waiting save first; the save reads the
+  form synchronously before awaiting, so leaving the screen can't lose the values. Deleting the
+  open project cancels its waiting save so it isn't recreated. Studio brain and output edits
+  still use their Save buttons.
 - Client request intake: on the Brief screen, a pasted job post (Upwork, email, chat) is read by
-  Claude Haiku 4.5 (about $0.003) and fills the form for review. Nothing saves until Save brief.
+  Claude Haiku 4.5 (about $0.003) and fills the form, which is then saved straight away.
   Unstated fields stay empty and become "Not stated in the request" questions in the notes;
   proposal requirements (screening words, portfolio asks) are kept under "For the proposal".
   The original request is saved as `brief.request`, shown to every phase inside
