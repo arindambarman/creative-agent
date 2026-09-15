@@ -92,6 +92,14 @@
   .intake summary{cursor:pointer;font-family:var(--serif);font-size:19px;font-weight:600}
   .intake summary::marker{color:var(--brass)}
   .filled{border-color:var(--brass-dim);background:var(--raise)}
+  .summary{background:var(--raise);border:1px solid var(--line);border-top:3px solid var(--brass);border-radius:10px;padding:16px 20px;margin-top:18px}
+  .summary-title{font-family:var(--sans);font-size:12.5px;font-weight:500;color:var(--dim);margin:0 0 6px}
+  .summary ul{margin:0;padding-left:18px}
+  .summary li{margin:4px 0;color:var(--paper)}
+  .summary li strong{font-weight:500}
+  .summary code{font-family:ui-monospace,monospace;font-size:13px;background:var(--panel);padding:1px 5px;border-radius:4px}
+  .summary-missing{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  .summary-missing .meta{display:block}
   .export-options{display:grid;gap:10px}
   .export-option{display:grid;gap:2px;text-align:left;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
   .export-option:hover{border-color:var(--brass-dim);background:var(--raise)}
@@ -141,6 +149,22 @@
 </div>
 
 <div id="modal-root"></div>
+<script>
+  // If the app's modules fail to load (most often a mix of new and cached files just after an
+  // update), say what to do instead of leaving a blank page.
+  (function () {
+    function showLoadError() {
+      if (window.__appStarted) return;
+      var view = document.getElementById('view');
+      if (view && !view.textContent.trim()) {
+        view.innerHTML = '<div class="err">The app didn’t finish loading. This usually happens right after an update. ' +
+          'Reload the page with Ctrl+F5 (Cmd+Shift+R on a Mac). If it keeps happening, check your connection.</div>';
+      }
+    }
+    window.addEventListener('error', function (e) { if (e && e.error instanceof SyntaxError) showLoadError(); });
+    setTimeout(showLoadError, 10000);
+  })();
+</script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

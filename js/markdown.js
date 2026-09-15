@@ -21,6 +21,36 @@ export function stripPreamble(src, maxChars = 300) {
   return text.slice(m.index);
 }
 
+// Separates a leading "## Summary" section from the rest of an output, so the app can show it
+// in its own card. The summary runs until the next heading or horizontal rule. Outputs without
+// one come back with an empty summary and the text untouched.
+export function splitSummary(src) {
+  const text = String(src ?? '');
+  const start = stripPreamble(text).replace(/^\s+/, '');
+  const head = start.match(/^#{1,4}\s+summary\b[^\n]*(\n|$)/i);
+  if (!head) return { summary: '', body: text };
+
+  const rest = start.slice(head[0].length);
+  const end = rest.search(/^(#{1,4}\s|(---|\*\*\*|___)\s*$)/m);
+  const summary = (end === -1 ? rest : rest.slice(0, end)).trim();
+  let body = end === -1 ? '' : rest.slice(end);
+  body = body.replace(/^(---|\*\*\*|___)\s*\n/, '').replace(/^\s+/, '');
+  return { summary, body };
+}
+
+// Cleans a model's bullet list: keeps list lines, normalises markers to "- ", at most six.
+export function normaliseBullets(src, max = 6) {
+  const bullets = String(src ?? '').split('\n')
+    .map(l => l.trim().match(/^(?:[-*+•]|\d+[.)])\s+(.*\S)/))
+    .filter(Boolean)
+    .map(m => `- ${m[1]}`)
+    .slice(0, max);
+  if (!bullets.length) throw new Error("The summary came back empty. Try again.");
+  return bullets.join('\n');
+}
+
+export const withSummary = (bullets, body) => `## Summary\n\n${bullets}\n\n${String(body ?? '').replace(/^\s+/, '')}`;
+
 export function md(src) {
   const lines = String(src ?? '').split('\n');
   let out = '', list = null, table = null, quote = false, fence = null;

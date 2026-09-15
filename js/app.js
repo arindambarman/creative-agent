@@ -1,7 +1,7 @@
 import { CONFIG, MODELS, WEB_SEARCH_PRICE, USE_SUPABASE, modelInfo } from './config.js';
-import { PHASES, SYSTEM, buildContent } from './phases.js';
+import { PHASES, SYSTEM, buildContent, summaryPrompt } from './phases.js';
 import { store, newId } from './store.js';
-import { md, esc, stripPreamble } from './markdown.js';
+import { md, esc, stripPreamble, splitSummary, normaliseBullets, withSummary } from './markdown.js';
 import { callModel, webSearchTool, costOf, RunError } from './model.js';
 import { INTAKE_MODEL, INTAKE_SYSTEM, buildIntakePrompt, parseIntake, notesWithQuestions } from './intake.js';
 import { projectDocument, buildDocx, buildPrintHtml, fileSlug } from './document.js';
@@ -341,7 +341,7 @@ function renderPhase(phase) {
     ${busyElsewhere ? '<p class="note" style="margin-top:16px">Another phase is still running. It will save when it finishes.</p>' : ''}
     <div id="err">${notice ? `<p class="note" style="margin-top:16px">${esc(notice)}</p>` : ''}</div>
     <div id="body">${busyHere ? '<p class="meta">Still running. The output will appear here when it finishes.</p>'
-      : out ? `<div class="out" style="border-left-color:${phase.color}">${md(out)}</div>
+      : out ? `${outputHtml(phase, out)}
       <div class="meta">Last run ${new Date(p.runAt[phase.id] || Date.now()).toLocaleString()}${runCostLine(p.runInfo?.[phase.id])}</div>`
       : `<div class="empty" style="margin-top:18px">Nothing here yet. Run the phase to generate it, then edit anything you want to change.</div>`}</div>`;
 
@@ -350,6 +350,7 @@ function renderPhase(phase) {
   $('run-model').onchange = e => { state.model = e.target.value; persist('all'); };
   if ($('stop')) $('stop').onclick = () => running?.controller.abort();
   if (out && !busyHere) {
+    if ($('add-summary')) $('add-summary').onclick = () => doAddSummary(p, phase);
     $('copy').onclick = async () => { await navigator.clipboard.writeText(out); $('copy').textContent = 'Copied'; setTimeout(() => { if ($('copy')) $('copy').textContent = 'Copy'; }, 1500); };
     $('history').onclick = () => renderHistory(phase);
     $('edit').onclick = () => {
@@ -368,13 +369,68 @@ function renderPhase(phase) {
 // Only redraw if the person is still looking at this phase of this project.
 const showing = (project, phase) => state.currentId === project.id && view.screen === phase.id;
 
+// A phase output: its summary in a card on top, then the full text. While streaming, the
+// cursor follows whichever part is being written. Saved outputs without a summary get a
+// button to add one.
+function outputHtml(phase, text, streaming = false) {
+  const cursor = streaming ? '<span class="cursor"></span>' : '';
+  // Older research outputs were saved with a lead-in line before the first heading.
+  if (phase.search && !streaming) text = stripPreamble(text);
+  const { summary, body } = splitSummary(text);
+  const full = content => `<div class="out" style="border-left-color:${phase.color}">${content}</div>`;
+
+  if (!summary) {
+    if (streaming) return full(md(text) + cursor);
+    return `<div class="summary summary-missing" style="border-top-color:${phase.color}">
+        <div><strong>No summary yet</strong><span class="meta" style="margin:4px 0 0">This output was written before summaries were added.
+        Add one for under $0.01 with Claude Haiku 4.5.</span></div>
+        <button class="btn" id="add-summary">Add summary</button>
+        <div id="summary-err" style="flex-basis:100%"></div>
+      </div>${full(md(text))}`;
+  }
+  return `<section class="summary" style="border-top-color:${phase.color}" aria-label="${esc(phase.name)} summary">
+      <h2 class="summary-title">Summary</h2>
+      ${md(summary)}${streaming && !body ? cursor : ''}
+    </section>
+    ${body ? full(md(body) + cursor) : ''}`;
+}
+
+async function doAddSummary(p, phase) {
+  const button = $('add-summary');
+  button.disabled = true;
+  button.textContent = 'Summarising…';
+  try {
+    const { url, headers } = await apiTarget();
+    const body = {
+      model: INTAKE_MODEL, // short, factual work: the cheapest model is enough
+      max_tokens: 1000,
+      stream: true,
+      messages: [{ role: 'user', content: summaryPrompt(phase, p.outputs[phase.id]) }]
+    };
+    if (USE_SUPABASE) body.phase = phase.id;
+    const result = await callModel({ url, headers, body });
+    const bullets = normaliseBullets(result.text);
+    const existing = phase.search ? stripPreamble(p.outputs[phase.id]) : p.outputs[phase.id];
+    await savePhaseOutput(p, phase.id, withSummary(bullets, existing), false);
+    phaseNotice = { phaseId: phase.id, text: 'Summary added. The previous version is in History.' };
+    if (showing(p, phase)) { renderRail(); renderPhase(phase); }
+  } catch (e) {
+    if (!showing(p, phase) || !$('summary-err')) return;
+    $('summary-err').innerHTML = `<div class="err" style="margin-top:10px">${esc(e.message)}
+      ${e.needsKey ? '<div class="row" style="margin-top:10px"><button class="btn" id="open-settings">Open Settings</button></div>' : ''}</div>`;
+    if ($('open-settings')) $('open-settings').onclick = settings;
+    $('add-summary').disabled = false;
+    $('add-summary').textContent = 'Add summary';
+  }
+}
+
 async function doRun(phase) {
   if (running) return;
   const p = current();
   running = { projectId: p.id, phaseId: phase.id, controller: new AbortController() };
   renderPhase(phase);
   $('body').innerHTML = `<div class="meta" id="activity"></div>
-    <div class="out" style="border-left-color:${phase.color}" id="live"><span class="cursor"></span></div>`;
+    <div id="live">${outputHtml(phase, '', true)}</div>`;
 
   const searches = [];
   try {
@@ -382,7 +438,7 @@ async function doRun(phase) {
       signal: running.controller.signal,
       onText: partial => {
         const live = $('live');
-        if (live && showing(p, phase)) live.innerHTML = md(partial) + '<span class="cursor"></span>';
+        if (live && showing(p, phase)) live.innerHTML = outputHtml(phase, partial, true);
       },
       onSearch: query => {
         searches.push(query);
@@ -696,6 +752,7 @@ function renderSignIn(message = '') {
 // ---- Boot -------------------------------------------------------------------
 
 async function boot() {
+  window.__appStarted = true; // tells the load-error notice in index.html that modules loaded
   $('new-btn').onclick = newProject;
   $('settings-btn').onclick = settings;
   $('export-btn').onclick = exportProject;

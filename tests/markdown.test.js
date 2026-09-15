@@ -1,6 +1,38 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { md, esc, stripPreamble } from '../js/markdown.js';
+import { md, esc, stripPreamble, splitSummary, normaliseBullets, withSummary } from '../js/markdown.js';
+
+test('splits a leading summary from the body', () => {
+  const { summary, body } = splitSummary('## Summary\n\n- Angle: quiet morning\n- 21 hours\n\n## Category landscape\nText');
+  assert.equal(summary, '- Angle: quiet morning\n- 21 hours');
+  assert.equal(body, '## Category landscape\nText');
+});
+
+test('summary ends at a rule or a deeper heading, and a lead-in before it is ignored', () => {
+  assert.deepEqual(splitSummary('Now I have enough.\n\n## Summary\n- a\n\n---\n\n### Quiet morning\nIdea'),
+    { summary: '- a', body: '### Quiet morning\nIdea' });
+});
+
+test('outputs without a summary are left untouched', () => {
+  const text = '## Category landscape\nText\n\n## Summary of trends\n- later';
+  assert.deepEqual(splitSummary(text), { summary: '', body: text });
+  assert.deepEqual(splitSummary(''), { summary: '', body: '' });
+});
+
+test('a summary that is still streaming has no body yet', () => {
+  assert.deepEqual(splitSummary('## Summary\n\n- first point'), { summary: '- first point', body: '' });
+});
+
+test('normalises bullet markers and caps the list', () => {
+  assert.equal(normaliseBullets('Here you go:\n* one\n• two\n3. three\n- four\n- five\n- six\n- seven'),
+    '- one\n- two\n- three\n- four\n- five\n- six');
+  assert.throws(() => normaliseBullets('No list here.'), /came back empty/);
+});
+
+test('adds a summary above an existing output', () => {
+  assert.equal(withSummary('- a', '\n## Plan\nText'), '## Summary\n\n- a\n\n## Plan\nText');
+  assert.deepEqual(splitSummary(withSummary('- a', '## Plan\nText')), { summary: '- a', body: '## Plan\nText' });
+});
 
 test('strips a short lead-in before the first heading', () => {
   assert.equal(stripPreamble('Now I have enough research. Let me write the full response.\n\n---\n\n## Category landscape\nText'),

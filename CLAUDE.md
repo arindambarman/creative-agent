@@ -100,6 +100,15 @@ Working and tested:
   (34 pages, 8 tables, 14 links, correct heading outline) and reading it with python-docx.
   WordprocessingML is order-sensitive (e.g. `w:rStyle` must be first in `w:rPr`, `w:shd` before
   `w:spacing` in `w:pPr`): check the schema order when adding formatting, and re-test in Word.
+- Phase summaries: every phase prompt asks for a leading "## Summary" of four to six bullets
+  (20 words or fewer each), focused by the phase's `summary` field in `js/phases.js`. The app
+  splits it off with `splitSummary()` and shows it in a card above the output, including while
+  streaming. Outputs without one show an Add summary button that asks Claude Haiku 4.5 (under
+  $0.01) and saves the bullets on top as a new version. Summaries are part of the output text,
+  so they save in both backends, appear in History, and export.
+- Load failure notice: `index.html` shows a "reload with Ctrl+F5" message if the modules fail to
+  load (seen when a browser mixes a new `app.js` with a cached older module after an update).
+  `boot()` sets `window.__appStarted` so the notice stays hidden when the app starts normally.
 - Brief auto-save: the brief form and pasted request save 800 ms after typing stops, with a
   status line. `render()`, export and page close flush a waiting save first; the save reads the
   form synchronously before awaiting, so leaving the screen can't lose the values. Deleting the

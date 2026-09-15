@@ -30,10 +30,11 @@ export const PHASES = [
     blurb: 'Trends and the marketing angle',
     color: '#6E8CA8',
     search: true,
+    summary: 'the angle in one line; the two or three strongest trends, each with its source; what to avoid; the most important open question',
     prompt: `Research and angle for this project. Two parts.
 
 Do all your searching before you write, without commentary. Your reply starts with the
-"Category landscape" heading — no lines about what you are about to search or have found.
+"Summary" heading — no lines about what you are about to search or have found.
 
 ## Category landscape
 Search for what visual content is working right now for this product category and audience.
@@ -63,6 +64,7 @@ Every source cited above, one per line, as a markdown link with its publication 
     name: 'Direct',
     blurb: 'Concept, colour and type',
     color: '#C8963E',
+    summary: 'each direction in one line with its key hex colours; which one is recommended and why; the main trade-off to weigh',
     prompt: `Art direction for this project. Give two distinct directions, then a recommendation.
 
 For each direction:
@@ -90,6 +92,7 @@ from it is worth reusing.`
     name: 'Plan',
     blurb: 'Storyboard, 3D specs and tasks',
     color: '#5E8C6A',
+    summary: 'how many frames and which methods (3D, AI, 2D); total estimated hours; whether it fits the budget and deadline; what must come from the client before work starts',
     prompt: `Production plan for the approved direction.
 
 ## Storyboard
@@ -120,6 +123,7 @@ Assets, dimensions, approvals, or copy required before work starts.`
     name: 'Deliver',
     blurb: 'Assembly, exports and review',
     color: '#8A6CAF',
+    summary: 'the assembly order in brief; how many exports across which platforms; every review item marked fix or check; the last thing to confirm before sending',
     prompt: `Final production and review.
 
 ## Assembly order
@@ -149,6 +153,7 @@ A short list of the last things to confirm.`
     name: 'Publish',
     blurb: 'Case study and social content',
     color: '#B5697F',
+    summary: 'whether the work can be posted, and anything to confirm first; which pieces were written; what to post first and where; the placeholders the designer still needs to fill',
     prompt: `Content to publish about this finished project.
 
 First: if the brief indicates an NDA, an unlaunched product, or no posting approval, say so and
@@ -238,7 +243,29 @@ ${brief.request.trim()}
     .filter(p => priorOutputs[p.id])
     .map((p, i) => `${i === 0 ? '# Work so far\n\n' : ''}## ${p.name} output\n\n${priorOutputs[p.id]}\n`);
 
-  return [studio, ...prior, `# Your task\n\n${phase.prompt}`];
+  return [studio, ...prior, `# Your task\n\n${summaryInstruction(phase)}\n\n${phase.prompt}`];
+}
+
+// Every phase opens with a short summary, shown above the full output in the app.
+export function summaryInstruction(phase) {
+  return `Begin your reply with a "## Summary" section: four to six bullet points for someone who
+only has thirty seconds. Each bullet is one line of 20 words or fewer; no sub-points, no
+paragraphs. Cover ${phase.summary}. Use specifics from the output (names, numbers, hex values),
+not descriptions of what the sections contain. Then write the rest exactly as set out below.`;
+}
+
+// Prompt for adding a summary to an output that was written without one.
+export function summaryPrompt(phase, output) {
+  return `Below is the ${phase.name} output from a visual design project.
+
+<output>
+${output}
+</output>
+
+Write its summary: four to six bullet points for someone who only has thirty seconds. Each
+bullet is one line of 20 words or fewer; no sub-points, no paragraphs. Cover ${phase.summary}. Use specifics from the output (names, numbers, hex
+values). Only use what the output says. Reply with the bullet points only, each starting with
+"- ", and nothing else.`;
 }
 
 // The message as one string, for reading or exporting.
