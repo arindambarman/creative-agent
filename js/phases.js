@@ -2,6 +2,8 @@
 // output of every phase before it. Edit the prompts here — this is where the
 // quality of the agent actually lives.
 
+import { splitSummary } from './markdown.js';
+
 export const SYSTEM = `You are a creative director working alongside a visual content designer.
 
 You have three reference documents describing this designer's studio: their brand voice, their
@@ -36,6 +38,11 @@ export const PHASES = [
 Do all your searching before you write, without commentary. Your reply starts with the
 "Summary" heading — no lines about what you are about to search or have found.
 
+Plan your searches before running any, one per topic: category visual trends, formats that
+perform on the brief's platforms, what competitors in this category are doing, and what looks
+overused. Never run the same or a near-identical query twice. Only search again when a result
+was empty or too old to use.
+
 ## Category landscape
 Search for what visual content is working right now for this product category and audience.
 Report what you actually find. After every factual point, name the source and its publication
@@ -66,6 +73,7 @@ Every source cited above, one per line, as a markdown link with its publication 
     color: '#4E9A96',
     optional: true, // only for jobs that need a pitch, such as Upwork posts
     summary: 'the opening hook; the price and timeline being bid, or that they are still to set; portfolio pieces to attach; any screening instruction and how it was met; the question that invites a reply',
+    readsInFull: ['discover'], // earlier phases it needs word for word; the rest arrive as summaries
     prompt: `A proposal to win this job, written to paste straight into Upwork or a reply email.
 
 Before writing, check the brief for requirements the client set for replies: notes under "For
@@ -115,6 +123,7 @@ request that are unclear enough to ask about after the client replies.`
     blurb: 'Concept, colour and type',
     color: '#C8963E',
     summary: 'each direction in one line with its key hex colours; which one is recommended and why; the main trade-off to weigh',
+    readsInFull: ['discover', 'propose'], // the research detail, and the scope the proposal promised
     prompt: `Art direction for this project. Give two distinct directions, then a recommendation.
 
 For each direction:
@@ -146,33 +155,40 @@ from it is worth reusing.`
     blurb: 'Storyboard, 3D specs and tasks',
     color: '#5E8C6A',
     summary: 'how many frames and which methods (3D, AI, 2D); total estimated hours; whether it fits the budget and deadline; what must come from the client before work starts',
+    readsInFull: ['propose', 'direct'], // the bid to check against, and the chosen direction in detail
     prompt: `Production plan for the approved direction.
 
+Be concrete and brief: a designer works from this, so every line should be an instruction or a
+number, not an explanation. Say each thing once; the task list and scope check refer back to
+frames by number rather than repeating their details.
+
 ## Storyboard
-One block per frame, numbered, covering every deliverable in the brief.
+One block per frame, numbered, covering every deliverable in the brief. Each bullet is one line
+of 25 words or fewer.
 
 **Frame N — [platform and aspect ratio]**
 - **Shot** — framing, camera angle, distance
 - **Light** — direction, quality, colour temperature
 - **In frame** — product position, props, surface, background
 - **Copy** — exact on-screen text, or "none"
-- **Method** — 3D, AI, or 2D composite, and one line on why
-- **Build** — for 3D frames: what the model needs (geometry, materials, label placement,
-  what must be accurate). For AI frames: the kind of plate needed and what gets replaced
-  in finishing. For 2D: which client assets it uses.
+- **Method** — 3D, AI, or 2D composite, and why in a few words
+- **Build** — for 3D: what the model needs and what must be accurate. For AI: the plate needed
+  and what gets replaced in finishing. For 2D: which client assets it uses. Two lines at most.
 
 ## Task list
-A table: task, tool, estimated hours. Use the time costs from the tools document. Total it.
+A table: task, tool, estimated hours. Use the time costs from the tools document. Group frames
+that share a task onto one row. Total it.
 
 ## Scope check
-Compare the total against the brief's budget and deadline. State plainly whether it fits.
-If a Propose output exists, also compare against the price, milestones, revision rounds and
-timeline it bid: say whether the hours support that price, and flag any frame or deliverable
-that goes beyond what was promised. If it doesn't fit, give two ways to cut scope without losing
-the idea.
+Under 150 words. Compare the total against the brief's budget and deadline and state plainly
+whether it fits. If a Propose output exists, also compare against the price, milestones,
+revision rounds and timeline it bid: whether the hours support that price, and any frame beyond
+what was promised. If it doesn't fit, give two ways to cut scope without losing the idea, one
+line each.
 
 ## What's still needed from the client
-Assets, dimensions, approvals, or copy required before work starts.`
+A bullet list of assets, dimensions, approvals, or copy required before work starts, one line
+each.`
   },
   {
     id: 'deliver',
@@ -180,15 +196,22 @@ Assets, dimensions, approvals, or copy required before work starts.`
     blurb: 'Assembly, exports and review',
     color: '#8A6CAF',
     summary: 'the assembly order in brief; how many exports across which platforms; every review item marked fix or check; the last thing to confirm before sending',
+    readsInFull: ['propose', 'plan'], // the promised scope, and every frame to assemble and export
     prompt: `Final production and review.
 
+Be concrete and brief: this is a checklist to work through, not a tutorial. The designer knows
+their tools, so name the step and the check, not how to use the software. Refer to frames by
+their number from the plan instead of re-describing them.
+
 ## Assembly order
-The sequence for bringing renders, plates, footage, and graphics into finished pieces. Name
-the tool for each step and what gets checked before moving on.
+At most ten numbered steps for bringing renders, plates, footage, and graphics into finished
+pieces. Each step is one or two lines: the tool, what happens, and what gets checked before
+moving on.
 
 ## Export list
 A table: deliverable, platform, exact dimensions, file format, and any platform requirement
-(white background, safe margins, file size limits). Cover every platform in the brief.
+(white background, safe margins, file size limits). Cover every platform in the brief. One row
+per deliverable; no notes outside the table.
 
 ## Review against the brief
 Go back to the original brief, the chosen direction, and the scope promised in the proposal if
@@ -200,10 +223,10 @@ there is one, then check:
 - Does anything look generated rather than designed
 - Does it match this designer's visual signature, or has it drifted
 
-For each, say pass, check, or fix, with what to do about it.
+For each, say pass, check, or fix, with what to do about it, in one or two lines.
 
 ## Before it goes to the client
-A short list of the last things to confirm.`
+At most five bullets: the last things to confirm.`
   },
   {
     id: 'publish',
@@ -211,6 +234,7 @@ A short list of the last things to confirm.`
     blurb: 'Case study and social content',
     color: '#B5697F',
     summary: 'whether the work can be posted, and anything to confirm first; which pieces were written; what to post first and where; the placeholders the designer still needs to fill',
+    readsInFull: ['direct', 'plan'], // the decisions and per-frame methods the write-ups describe
     prompt: `Content to publish about this finished project.
 
 First: if the brief indicates an NDA, an unlaunched product, or no posting approval, say so and
@@ -301,9 +325,19 @@ ${brief.request.trim()}
 
   const prior = PHASES
     .filter(p => priorOutputs[p.id])
-    .map((p, i) => `${i === 0 ? '# Work so far\n\n' : ''}## ${p.name} output\n\n${priorOutputs[p.id]}\n`);
+    .map((p, i) => `${i === 0 ? '# Work so far\n\n' : ''}${priorPart(phase, p, priorOutputs[p.id])}\n`);
 
   return [studio, ...prior, `# Your task\n\n${summaryInstruction(phase)}\n\n${phase.prompt}`];
+}
+
+// Earlier outputs a phase doesn't need word for word are sent as their summary, which cuts
+// input tokens on the later phases. Outputs saved before summaries existed go in full.
+export function priorPart(phase, earlier, output) {
+  if (!(phase.readsInFull || []).includes(earlier.id)) {
+    const { summary } = splitSummary(output);
+    if (summary) return `## ${earlier.name} output (summary)\n\n${summary}`;
+  }
+  return `## ${earlier.name} output\n\n${output}`;
 }
 
 // Every phase opens with a short summary, shown above the full output in the app.
@@ -333,14 +367,19 @@ export function buildMessage(phase, project, docs, priorOutputs, today) {
   return buildParts(phase, project, docs, priorOutputs, today).join('\n');
 }
 
-// The message as content blocks for the API. Everything before the task is the same for
-// every later phase of the project, so it is marked for caching: the studio documents and
-// brief, and the latest earlier output. A phase run within five minutes of the previous
-// one then reads those tokens at a tenth of the price.
+// The message as content blocks for the API, with two cache breakpoints:
+// - The studio documents and brief are identical for every phase of a project, and people
+//   usually spend more than five minutes reviewing one phase before running the next, so this
+//   block uses the one-hour cache. It costs 2x to write and a tenth to read.
+//   Research phases send the web search tool, and tools come first in the cached prefix, so
+//   their cache can't be shared with other phases. They use the cheaper five-minute cache,
+//   which still covers their own search round trips.
+// - The last earlier output, on the five-minute cache, so "Run again" re-reads everything cheaply.
+// One-hour entries must come before five-minute ones, which this order guarantees.
 export function buildContent(phase, project, docs, priorOutputs, today) {
   const parts = buildParts(phase, project, docs, priorOutputs, today);
   const blocks = parts.map(text => ({ type: 'text', text }));
-  const cached = [0, blocks.length - 2].filter((i, n, all) => i >= 0 && all.indexOf(i) === n);
-  for (const i of cached) blocks[i].cache_control = { type: 'ephemeral' };
+  blocks[0].cache_control = phase.search ? { type: 'ephemeral' } : { type: 'ephemeral', ttl: '1h' };
+  if (blocks.length > 2) blocks[blocks.length - 2].cache_control = { type: 'ephemeral' };
   return blocks;
 }

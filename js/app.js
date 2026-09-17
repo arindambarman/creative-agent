@@ -106,7 +106,10 @@ async function runPhase(project, phase, { signal, onText, onSearch, onRetry }) {
 
   const { url, headers } = await apiTarget();
   if (!USE_SUPABASE) delete body.phase;
-  return callModel({ url, headers, body, signal, onText, onSearch, onRetry });
+  // Web searches run server-side and the stream can stay silent for minutes while they do,
+  // so research phases get a longer allowance before a quiet stream counts as stalled.
+  const idleMs = phase.search ? 300000 : 120000;
+  return callModel({ url, headers, body, signal, onText, onSearch, onRetry, idleMs });
 }
 
 // Where requests go: straight to Anthropic with the browser's key, or through the edge function.

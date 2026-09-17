@@ -32,10 +32,45 @@ test('includes the original client request only when there is one', () => {
   assert.doesNotMatch(buildMessage(phase('discover'), project, docs, {}, today), /Original client request/);
 });
 
-test('first phase caches the studio and brief block only', () => {
+test('earlier phases a phase does not need in full arrive as their summary', () => {
+  const discover = '## Summary\n- Angle: quiet morning\n\n## Category landscape\nLong research text';
+  const direct = '## Summary\n- Quiet morning #F4EDE1\n\n### Quiet morning\nLong direction text';
+  const plan = buildMessage(phase('plan'), project, docs, { discover, direct }, today);
+  assert.match(plan, /## Discover output \(summary\)\n\n- Angle: quiet morning/);
+  assert.doesNotMatch(plan, /Long research text/);
+  assert.match(plan, /## Direct output\n\n## Summary[\s\S]*Long direction text/); // Plan reads Direct in full
+
+  const deliver = buildMessage(phase('deliver'), project, docs, { discover, direct }, today);
+  assert.match(deliver, /## Direct output \(summary\)/);
+  assert.doesNotMatch(deliver, /Long direction text/);
+});
+
+test('outputs saved before summaries existed are sent in full', () => {
+  const text = buildMessage(phase('deliver'), project, docs, { discover: 'Old research, no summary.' }, today);
+  assert.match(text, /## Discover output\n\nOld research, no summary\./);
+});
+
+test('every phase reads in full only phases that come before it', () => {
+  PHASES.forEach((p, i) => {
+    for (const id of p.readsInFull || []) {
+      const at = PHASES.findIndex(x => x.id === id);
+      assert.ok(at > -1 && at < i, `${p.id} reads ${id}, which does not come before it`);
+    }
+  });
+});
+
+test('studio block uses the one-hour cache, the last earlier output the five-minute cache', () => {
+  const blocks = buildContent(phase('plan'), project, docs, { discover: 'Research.', direct: 'Two directions.' }, today);
+  assert.deepEqual(blocks[0].cache_control, { type: 'ephemeral', ttl: '1h' });
+  assert.deepEqual(blocks[2].cache_control, { type: 'ephemeral' });
+  assert.equal(blocks[3].cache_control, undefined);
+});
+
+test('first phase caches the studio and brief block only, on the five-minute cache', () => {
   const blocks = buildContent(phase('discover'), project, docs, {}, today);
   assert.equal(blocks.length, 2);
   assert.deepEqual(blocks.map(b => Boolean(b.cache_control)), [true, false]);
+  assert.deepEqual(blocks[0].cache_control, { type: 'ephemeral' }); // its tools make the prefix unshareable
   assert.match(blocks[1].text, /^# Your task/);
 });
 

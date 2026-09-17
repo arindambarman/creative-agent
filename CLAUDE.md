@@ -134,10 +134,26 @@ Working and tested:
   Tested on a real sample post: all fields correct, "within 2 weeks" converted to a date.
 - Cost: people choose a model in Settings (default Claude Sonnet 5 at effort medium; Sonnet 4.6
   and Haiku 4.5 also offered). Each phase shows its last run's model and approximate cost from
-  streamed usage. Discover is capped at `CONFIG.searchLimit` searches. The studio + brief block
-  and the latest earlier output are marked for prompt caching, so a phase run within five minutes
-  of the previous one reads them at a tenth of the price. The model choice and per-run cost are
-  kept in local mode only; in Supabase mode they last until reload.
+  streamed usage. The model choice and per-run cost are kept in local mode only; in Supabase
+  mode they last until reload.
+- Cost levers in the prompts (see `js/phases.js`):
+  - Each phase lists `readsInFull`, the earlier phases it needs word for word. Every other
+    earlier output is sent as its summary (`priorPart()`), or in full if it has none.
+  - The studio + brief block uses the one-hour cache (people review for more than five minutes
+    between phases); the last earlier output uses the five-minute cache, for "Run again".
+    `Today's date` sits in that block, so it re-caches once a day.
+  - Plan and Deliver prompts set line and word limits, since output costs five times input.
+  - Discover plans one search per topic and is capped at `CONFIG.searchLimit` searches.
+  When adding a phase, set its `readsInFull` and `summary`; a missing summary quietly sends the
+  full text to every later phase.
+  Measured on 17 September 2026, all six phases on Sonnet 5 for the Hearth & Grain brief:
+  Discover $0.150 (4 searches), Propose $0.048, Direct $0.033, Plan $0.050, Deliver $0.030,
+  Publish $0.044, total $0.355. Against sending every earlier output in full, input tokens fell
+  19% on Plan, 25% on Deliver and 29% on Publish; Plan's output was 31% shorter than before the
+  limits and Deliver's was 4,000 characters against 26,000 in the first test, with no loss of
+  useful detail on review. Each later phase read the studio block from cache (7–10k tokens).
+  - A web search request can go silent for more than two minutes while searches run, so
+    research phases allow five minutes before treating a stream as stalled.
 - Measured on the Direct phase (14 September 2026): Sonnet 4.6 $0.058 in 53s, Sonnet 5 $0.045 in
   25s, Haiku 4.5 $0.018 in 22s. Plan straight after Direct on Sonnet 5 read 10,488 tokens from
   cache. Haiku's directions were distinct but reached for generic fonts and props; Sonnet 5's two
