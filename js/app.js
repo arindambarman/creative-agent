@@ -4,8 +4,8 @@ import { store, newId } from './store.js';
 import { md, esc, stripPreamble, splitSummary, normaliseBullets, withSummary, sectionText } from './markdown.js';
 import { callModel, webSearchTool, costOf, RunError } from './model.js';
 import { INTAKE_MODEL, INTAKE_SYSTEM, buildIntakePrompt, parseIntake, notesWithQuestions } from './intake.js';
-import { projectDocument, buildDocx, buildPrintHtml, fileSlug } from './document.js';
-import { IMAGE_MODELS, IMAGE_PROMPT_SYSTEM, MAX_REFERENCES, imageModel, imagePrice, buildImagePromptRequest, parseFramePrompts, generateImage } from './images.js';
+import { projectDocument, buildDocx, buildPrintHtml, fileSlug, parseBlocks } from './document.js';
+import { IMAGE_MODELS, IMAGE_PROMPT_SYSTEM, MAX_REFERENCES, SIZE_PIXELS, imageModel, imagePrice, buildImagePromptRequest, parseFramePrompts, generateImage, exportRows, coverage, longestSide } from './images.js';
 import { putImage, getImage, deleteImage, assetRecord, referenceRecord, assetsForFrame, assetSummary, totalAssetCost } from './assets.js';
 
 const currentModel = () => modelInfo(state.model);
@@ -602,6 +602,7 @@ function renderAssets() {
       <span class="meta" style="margin:0">${esc(model.note)}${spent ? ` · $${spent.toFixed(2)} spent on this project` : ''}</span>
     </div>
     <div id="assets-msg"></div>
+    ${deliveryNote(p, frames)}
     ${referencePanel(p)}
     <div id="frames">${frames.length ? '' : `<div class="empty" style="margin-top:18px">No prompts yet. Write them from the plan, then generate or copy them.</div>`}</div>`;
 
@@ -621,6 +622,24 @@ function renderAssets() {
     $('frames').innerHTML = frames.map(f => frameCard(p, f, price)).join('');
     wireFrameCards(p, frames);
   }
+}
+
+// Checks the prompts against Deliver's export list, so nothing that has to ship is forgotten.
+function deliveryNote(project, frames) {
+  const deliver = project.outputs?.deliver;
+  if (!deliver) {
+    return `<p class="note" style="margin-top:16px">Deliver hasn't run yet. Run it and rewrite the prompts to
+      pick up exact export sizes, formats and platform requirements for each frame.</p>`;
+  }
+  const rows = exportRows(deliver, parseBlocks);
+  if (!rows.length || !frames.length) return '';
+  const { covered, missing } = coverage(frames, rows);
+  if (!missing.length) {
+    return `<p class="note" style="margin-top:16px">All ${covered.length} deliverables in the export list have a prompt.</p>`;
+  }
+  return `<div class="err" style="margin-top:16px">These deliverables have no prompt yet:
+    <ul style="margin:6px 0 0">${missing.map(r => `<li>${esc(r.deliverable)}${r.dimensions ? ` — ${esc(r.dimensions)}` : ''}</li>`).join('')}</ul>
+    Rewrite the prompts, or add them by hand in the plan and rewrite.</div>`;
 }
 
 // Reference images go with every Generate, so the client's own product, logo and room stay
@@ -691,9 +710,16 @@ const variantLabel = { full: 'Full scene', plate: 'Scene plate' };
 
 function frameCard(project, frame, price) {
   const variants = ['full', 'plate'].filter(v => frame[v]);
+  const needed = longestSide(frame.dimensions);
+  const generating = SIZE_PIXELS[state.imageSize] || 1024;
+  const tooSmall = needed > generating;
+  const spec = [frame.platform, frame.dimensions, frame.format].filter(Boolean).join(' · ');
   return `<section class="card stack frame-card" style="margin-top:16px">
     <div class="row"><h2 style="margin:0;flex:1">Frame ${esc(String(frame.frame))} · ${esc(frame.name)}</h2>
       <span class="tag">${esc(frame.aspect_ratio)}</span></div>
+    ${spec || frame.requirement ? `<p class="meta" style="margin:0">
+      ${spec ? `Delivers: ${esc(spec)}` : ''}${frame.requirement ? `${spec ? ' · ' : ''}${esc(frame.requirement)}` : ''}
+      ${tooSmall ? `<br>Needs ${needed} px on the long side; ${state.imageSize} generates about ${generating} px, so generate at a larger size or enlarge it in finishing.` : ''}</p>` : ''}
     ${variants.map(v => {
       const shots = assetsForFrame(project.assets, frame.frame, v);
       return `<div class="variant">
@@ -802,7 +828,8 @@ async function doWritePrompts() {
       max_tokens: 8000,
       stream: true,
       system: IMAGE_PROMPT_SYSTEM,
-      messages: [{ role: 'user', content: buildImagePromptRequest(p.outputs.plan, p.brief) }]
+      // Deliver's export list says what must actually ship, so prompts carry its dimensions.
+      messages: [{ role: 'user', content: buildImagePromptRequest(p.outputs.plan, p.brief, p.outputs.deliver) }]
     };
     if (currentModel().effort) body.output_config = { effort: currentModel().effort };
     if (USE_SUPABASE) body.phase = 'image_prompts';
@@ -865,7 +892,11 @@ async function doImport(project, frame, variant, file) {
 async function storeAsset(project, frame, variant, dataUrl, meta) {
   const id = newId();
   await putImage(id, dataUrl);
-  (project.assets ??= []).push(assetRecord({ id, frame: frame.frame, variant, name: frame.name, ...meta }));
+  (project.assets ??= []).push(assetRecord({
+    id, frame: frame.frame, variant, name: frame.name,
+    deliverable: [frame.deliverable || frame.platform, frame.dimensions].filter(Boolean).join(' '),
+    ...meta
+  }));
   await persist('project', project);
   if (view.screen === 'assets' && state.currentId === project.id) renderAssets();
   renderRail();

@@ -30,14 +30,22 @@ export const IMAGE_PROMPT_SYSTEM =
 
 // Asks the text model for one prompt per frame, in two versions: the finished scene, and the
 // same scene with the product and text left out for the designer to composite.
-export function buildImagePromptRequest(planOutput, brief = {}) {
+export function buildImagePromptRequest(planOutput, brief = {}, deliverOutput = '') {
   const product = [brief.product, brief.client].filter(Boolean).join(' by ');
   return `Below is the production plan for a visual content project.
 
 <plan>
 ${planOutput}
 </plan>
+${deliverOutput ? `
+The delivery specification below lists what must actually be exported: platforms, exact pixel
+dimensions, file formats and platform requirements. Every deliverable in it that needs a picture
+must have a frame here, even if the plan missed it.
 
+<delivery_specification>
+${deliverOutput}
+</delivery_specification>
+` : ''}
 ${product ? `The product is: ${product}.\n` : ''}${brief.notes ? `Brief notes: ${brief.notes}\n` : ''}
 For every frame in the plan, write image generation instructions in two versions.
 
@@ -53,8 +61,14 @@ light direction and quality, colour palette with any hex values from the plan, c
 lens feel, depth of field, mood, and where empty space must be left for type. Describe what to
 see, not which tool to use. Never name a brand, an artist, or a photographer.
 
+Give every frame its delivery details where the specification provides them: the platform, the
+exact pixel dimensions, the file format, and any platform requirement. Take the aspect ratio
+from those dimensions. Where the specification says nothing, use the plan and leave the rest empty.
+
 Reply with JSON only, keeping the plan's own frame numbers:
-{"frames":[{"frame":1,"name":"short name","aspect_ratio":"4:5","full":"...","plate":"..."}]}`;
+{"frames":[{"frame":1,"name":"short name","aspect_ratio":"4:5","deliverable":"Instagram feed post",
+"platform":"Instagram","dimensions":"1080 x 1350","format":"JPG","requirement":"label sharp at 1x",
+"full":"...","plate":"..."}]}`;
 }
 
 export function parseFramePrompts(text) {
@@ -68,15 +82,99 @@ export function parseFramePrompts(text) {
   }
   const frames = Array.isArray(data?.frames) ? data.frames : [];
   const clean = v => (typeof v === 'string' ? v.trim() : '');
-  const out = frames.map((f, i) => ({
-    frame: Number.isFinite(f?.frame) ? f.frame : i + 1,
-    name: clean(f?.name) || `Frame ${i + 1}`,
-    aspect_ratio: /^\d{1,2}:\d{1,2}$/.test(clean(f?.aspect_ratio)) ? clean(f.aspect_ratio) : '4:5',
-    full: clean(f?.full),
-    plate: clean(f?.plate)
-  })).filter(f => f.full || f.plate);
+  const out = frames.map((f, i) => {
+    const dimensions = clean(f?.dimensions);
+    const stated = clean(f?.aspect_ratio);
+    return {
+      frame: Number.isFinite(f?.frame) ? f.frame : i + 1,
+      name: clean(f?.name) || `Frame ${i + 1}`,
+      // The exported dimensions are the truth about shape; the stated ratio is the fallback.
+      aspect_ratio: aspectFromDimensions(dimensions) || (/^\d{1,2}:\d{1,2}$/.test(stated) ? stated : '4:5'),
+      deliverable: clean(f?.deliverable),
+      platform: clean(f?.platform),
+      dimensions,
+      format: clean(f?.format),
+      requirement: clean(f?.requirement),
+      full: clean(f?.full),
+      plate: clean(f?.plate)
+    };
+  }).filter(f => f.full || f.plate);
   if (!out.length) throw new Error('No frames came back. Check that the Plan output lists frames, then try again.');
   return out;
+}
+
+// ---- Delivery specification ---------------------------------------------------
+// The Deliver phase lists what has to be exported. These helpers carry that through to the
+// pictures, so every deliverable that needs an image has a prompt and the right shape.
+
+// "1080 x 1350" -> "4:5". Unreadable or square-ish oddities come back as null.
+export function aspectFromDimensions(text) {
+  const match = /(\d{3,5})\s*[x×*]\s*(\d{3,5})/i.exec(String(text ?? ''));
+  if (!match) return null;
+  let [w, h] = [Number(match[1]), Number(match[2])];
+  if (!w || !h) return null;
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  const d = gcd(w, h);
+  return `${w / d}:${h / d}`;
+}
+
+// The longest side the export needs, so the app can tell when 1K is too small for it.
+export const longestSide = text => {
+  const match = /(\d{3,5})\s*[x×*]\s*(\d{3,5})/i.exec(String(text ?? ''));
+  return match ? Math.max(Number(match[1]), Number(match[2])) : 0;
+};
+
+export const SIZE_PIXELS = { '0.5K': 512, '1K': 1024, '2K': 2048, '4K': 4096 };
+
+// Rows of the Deliver phase's export table, whatever its column order.
+export function exportRows(deliverOutput, parseBlocks) {
+  const tables = parseBlocks(deliverOutput || '').filter(b => b.type === 'table' && b.rows.length > 1);
+  const rows = [];
+  for (const table of tables) {
+    const header = table.rows[0].map(c => c.toLowerCase());
+    const at = names => header.findIndex(h => names.some(n => h.includes(n)));
+    const columns = {
+      deliverable: at(['deliverable', 'asset', 'item', 'frame']),
+      platform: at(['platform', 'channel']),
+      dimensions: at(['dimension', 'size', 'pixel']),
+      format: at(['format', 'file type']),
+      requirement: at(['requirement', 'note', 'platform requirement'])
+    };
+    if (columns.deliverable === -1 || columns.dimensions === -1) continue; // not an export table
+    for (const row of table.rows.slice(1)) {
+      const value = i => (i >= 0 ? (row[i] || '').trim() : '');
+      const deliverable = value(columns.deliverable);
+      if (!deliverable) continue;
+      rows.push({
+        deliverable,
+        platform: value(columns.platform),
+        dimensions: value(columns.dimensions),
+        format: value(columns.format),
+        requirement: value(columns.requirement)
+      });
+    }
+  }
+  return rows;
+}
+
+// Which exports have a prompt, and which don't. Matched on frame number first, then on the
+// deliverable's own words, so "Frame 4 — Reel" finds the Reel prompt.
+export function coverage(frames, rows) {
+  const covered = [], missing = [];
+  for (const row of rows) {
+    const frameNumber = /frame\s*(\d+)/i.exec(row.deliverable)?.[1];
+    const words = row.deliverable.toLowerCase().replace(/frame\s*\d+/i, '').split(/[^a-z0-9]+/).filter(w => w.length > 3);
+    const match = frames.find(f => (frameNumber && String(f.frame) === frameNumber))
+      || frames.find(f => {
+        const hay = `${f.deliverable} ${f.name} ${f.platform}`.toLowerCase();
+        return words.length > 0 && words.every(w => hay.includes(w));
+      })
+      || frames.find(f => row.dimensions && f.dimensions && longestSide(f.dimensions) === longestSide(row.dimensions)
+        && aspectFromDimensions(f.dimensions) === aspectFromDimensions(row.dimensions));
+    if (match) covered.push({ row, frame: match });
+    else missing.push(row);
+  }
+  return { covered, missing };
 }
 
 // At most this many reference images travel with a request: enough for a product, a logo and a

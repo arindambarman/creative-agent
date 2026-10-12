@@ -1,6 +1,67 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { IMAGE_MODELS, MAX_REFERENCES, imageModel, imagePrice, buildImagePromptRequest, parseFramePrompts, generateImage, findImageData, dataUrlToPart, withReferences } from '../js/images.js';
+import { IMAGE_MODELS, MAX_REFERENCES, imageModel, imagePrice, buildImagePromptRequest, parseFramePrompts, generateImage, findImageData, dataUrlToPart, withReferences, aspectFromDimensions, longestSide, exportRows, coverage } from '../js/images.js';
+import { parseBlocks } from '../js/document.js';
+
+test('aspect ratios and sizes come from the export dimensions', () => {
+  assert.equal(aspectFromDimensions('1080 x 1350'), '4:5');
+  assert.equal(aspectFromDimensions('1080x1920'), '9:16');
+  assert.equal(aspectFromDimensions('2048 × 2048'), '1:1');
+  assert.equal(aspectFromDimensions('no numbers here'), null);
+  assert.equal(longestSide('1080 x 1350'), 1350);
+  assert.equal(longestSide(''), 0);
+});
+
+test('the export table is read whatever its column order', () => {
+  const deliver = `## Export list
+
+| Platform | Deliverable | File format | Dimensions | Requirement |
+|---|---|---|---|---|
+| Instagram | Frame 1 — feed post | JPG | 1080 x 1350 | none |
+| Pinterest | Frame 5 — pin | JPG | 1000 x 1500 | text safe margin |
+
+## Something else
+
+| Task | Hours |
+|---|---|
+| Composite | 2 |`;
+  const rows = exportRows(deliver, parseBlocks);
+  assert.equal(rows.length, 2, 'the hours table is not an export table');
+  assert.deepEqual(rows[0], { deliverable: 'Frame 1 — feed post', platform: 'Instagram', dimensions: '1080 x 1350', format: 'JPG', requirement: 'none' });
+});
+
+test('coverage finds the prompt for each deliverable, and what is missing', () => {
+  const frames = [
+    { frame: 1, name: 'Counter scene', deliverable: 'Instagram feed post', platform: 'Instagram', dimensions: '1080 x 1350' },
+    { frame: 4, name: 'Reel', deliverable: '', platform: 'Instagram', dimensions: '1080 x 1920' }
+  ];
+  const rows = [
+    { deliverable: 'Frame 1 — feed post', dimensions: '1080 x 1350' },
+    { deliverable: 'Reel teaser', dimensions: '1080 x 1920' },
+    { deliverable: 'Table card A4 print', dimensions: '2480 x 3508' }
+  ];
+  const { covered, missing } = coverage(frames, rows);
+  assert.deepEqual(covered.map(c => c.frame.frame), [1, 4]);
+  assert.deepEqual(missing.map(m => m.deliverable), ['Table card A4 print']);
+});
+
+test('frames carry their delivery details, taking the shape from the dimensions', () => {
+  const [frame] = parseFramePrompts(JSON.stringify({ frames: [{
+    frame: 4, name: 'Reel', aspect_ratio: '4:5', deliverable: 'Instagram Reel', platform: 'Instagram',
+    dimensions: '1080 x 1920', format: 'MP4', requirement: '7-10 sec', full: 'A jar', plate: 'No jar'
+  }] }));
+  assert.equal(frame.aspect_ratio, '9:16', 'the dimensions win over a wrong stated ratio');
+  assert.equal(frame.deliverable, 'Instagram Reel');
+  assert.equal(frame.format, 'MP4');
+  assert.equal(frame.requirement, '7-10 sec');
+});
+
+test('the delivery specification is included in the prompt request when it exists', () => {
+  const withSpec = buildImagePromptRequest('plan text', {}, '| Deliverable | Dimensions |\n|---|---|\n| Hero | 2048 x 2048 |');
+  assert.match(withSpec, /<delivery_specification>/);
+  assert.match(withSpec, /must have a frame here/);
+  assert.doesNotMatch(buildImagePromptRequest('plan text', {}), /<delivery_specification>/);
+});
 
 test('the reference instruction is only added when there are references', () => {
   assert.match(withReferences('A scene.', 2), /exactly as they appear[\s\S]*A scene\./);
@@ -24,7 +85,10 @@ test('the prompt request carries the plan, the product and both versions', () =>
 
 test('parses frames, keeping plan numbering and filling gaps', () => {
   const frames = parseFramePrompts('```json\n{"frames":[{"frame":7,"name":" Hero ","aspect_ratio":"1:1","full":"A jar","plate":"No jar"},{"full":"Second","aspect_ratio":"wrong"}]}\n```');
-  assert.deepEqual(frames[0], { frame: 7, name: 'Hero', aspect_ratio: '1:1', full: 'A jar', plate: 'No jar' });
+  assert.deepEqual(frames[0], {
+    frame: 7, name: 'Hero', aspect_ratio: '1:1', full: 'A jar', plate: 'No jar',
+    deliverable: '', platform: '', dimensions: '', format: '', requirement: ''
+  });
   assert.equal(frames[1].frame, 2);
   assert.equal(frames[1].aspect_ratio, '4:5'); // bad ratios fall back
   assert.equal(frames[1].name, 'Frame 2');

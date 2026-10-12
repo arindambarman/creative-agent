@@ -122,6 +122,13 @@ Working and tested:
   `assetSummary()` tells later phases which frames have a full scene or a plate.
   Google's image models need a paid tier: a free key returns "limit: 0 requests per day", and
   they accept `image/jpeg` only, not PNG.
+  Delivery link: the prompt request also carries the Deliver output, so each frame comes back
+  with its deliverable, platform, exact dimensions, format and requirement; the aspect ratio is
+  taken from those dimensions rather than the model's stated ratio. `exportRows()` reads
+  Deliver's export table (via `parseBlocks`), `coverage()` matches it against the frames, and
+  the screen lists any deliverable with no prompt. A frame whose export needs more pixels than
+  the chosen size says so. Saved images record their deliverable, which `assetSummary()` passes
+  back to the later phases.
   Brand references: photos of the client's real product, logo or room, added on the Images
   screen and kept in IndexedDB like any other image (`projects.brand_references` in Supabase;
   "references" is reserved in SQL). Up to `MAX_REFERENCES` (4) go with every full-scene Generate,

@@ -36,12 +36,13 @@ export const getImage = id => run('readonly', store => store.get(id)).then(row =
 export const deleteImage = id => run('readwrite', store => store.delete(id));
 
 // The record kept with the project. `id` points at the picture in IndexedDB.
-export function assetRecord({ id, frame, variant, name, source, model, cost, bytes }) {
+export function assetRecord({ id, frame, variant, name, deliverable, source, model, cost, bytes }) {
   return {
     id,
     frame,
     variant,                       // 'full' or 'plate'
     name: name || `Frame ${frame}`,
+    deliverable: deliverable || '', // what it ships as, from the Deliver export list
     source,                        // 'generated' or 'imported'
     model: model || null,
     cost: cost || 0,
@@ -71,7 +72,8 @@ export function assetSummary(assets) {
   const lines = [...byFrame.entries()].map(([key, list]) => {
     const [frame, name] = key.split('|');
     const made = list.map(a => `${a.variant === 'plate' ? 'scene plate' : 'full scene'} (${a.source})`).join(', ');
-    return `- Frame ${frame} ${name}: ${made}`;
+    const ships = list.find(a => a.deliverable)?.deliverable;
+    return `- Frame ${frame} ${name}${ships ? ` [${ships}]` : ''}: ${made}`;
   });
   return lines.join('\n');
 }
