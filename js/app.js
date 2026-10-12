@@ -5,8 +5,8 @@ import { md, esc, stripPreamble, splitSummary, normaliseBullets, withSummary, se
 import { callModel, webSearchTool, costOf, RunError } from './model.js';
 import { INTAKE_MODEL, INTAKE_SYSTEM, buildIntakePrompt, parseIntake, notesWithQuestions } from './intake.js';
 import { projectDocument, buildDocx, buildPrintHtml, fileSlug } from './document.js';
-import { IMAGE_MODELS, IMAGE_PROMPT_SYSTEM, imageModel, imagePrice, buildImagePromptRequest, parseFramePrompts, generateImage } from './images.js';
-import { putImage, getImage, deleteImage, assetRecord, assetsForFrame, assetSummary, totalAssetCost } from './assets.js';
+import { IMAGE_MODELS, IMAGE_PROMPT_SYSTEM, MAX_REFERENCES, imageModel, imagePrice, buildImagePromptRequest, parseFramePrompts, generateImage } from './images.js';
+import { putImage, getImage, deleteImage, assetRecord, referenceRecord, assetsForFrame, assetSummary, totalAssetCost } from './assets.js';
 
 const currentModel = () => modelInfo(state.model);
 
@@ -602,7 +602,11 @@ function renderAssets() {
       <span class="meta" style="margin:0">${esc(model.note)}${spent ? ` · $${spent.toFixed(2)} spent on this project` : ''}</span>
     </div>
     <div id="assets-msg"></div>
+    ${referencePanel(p)}
     <div id="frames">${frames.length ? '' : `<div class="empty" style="margin-top:18px">No prompts yet. Write them from the plan, then generate or copy them.</div>`}</div>`;
+
+  wireReferences(p);
+  loadThumbnails();
 
   $('write-prompts').onclick = doWritePrompts;
   $('image-model').onchange = e => {
@@ -618,6 +622,70 @@ function renderAssets() {
     wireFrameCards(p, frames);
   }
 }
+
+// Reference images go with every Generate, so the client's own product, logo and room stay
+// themselves from one post to the next instead of being reinvented each time.
+function referencePanel(project) {
+  const refs = project.references || [];
+  return `<details class="card intake" style="margin-top:16px" ${refs.length ? '' : 'open'}>
+    <summary>Brand references ${refs.length ? `(${refs.length})` : ''}</summary>
+    <div class="stack" style="margin-top:14px">
+      <p class="meta" style="margin:0">Photos of the client's real product, logo, room or dishes. Up to ${MAX_REFERENCES} are
+      sent with every Generate, with an instruction to keep them exactly as they are. Without them the model
+      invents a product that changes between posts.</p>
+      <div class="row"><button class="btn" id="add-reference">Add reference images</button>
+        <span class="meta" style="margin:0">${refs.length ? `${refs.length} in use` : 'None yet'}</span></div>
+      <div class="shots">${refs.map(r => `
+        <figure class="shot" data-reference="${esc(r.id)}">
+          <img alt="${esc(r.name)}" data-src="${esc(r.id)}">
+          <figcaption class="meta">${esc(r.name)}<span style="flex:1"></span>
+            <button class="btn btn-quiet" data-del-reference="${esc(r.id)}">Remove</button></figcaption>
+        </figure>`).join('')}</div>
+    </div>
+  </details>`;
+}
+
+function wireReferences(project) {
+  $('add-reference').onclick = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg,image/webp';
+    input.multiple = true;
+    input.onchange = async () => {
+      for (const file of [...(input.files || [])].slice(0, MAX_REFERENCES)) {
+        try {
+          if (file.size > 12_000_000) throw new Error(`${file.name} is larger than 12 MB.`);
+          const dataUrl = await readFileAsDataUrl(file);
+          const id = newId();
+          await putImage(id, dataUrl);
+          (project.references ??= []).push(referenceRecord({ id, name: file.name.replace(/\.[^.]+$/, ''), bytes: file.size }));
+        } catch (e) {
+          if ($('assets-msg')) $('assets-msg').innerHTML = `<div class="err" style="margin-top:16px">${esc(e.message)}</div>`;
+        }
+      }
+      await persist('project', project);
+      if (view.screen === 'assets') renderAssets();
+    };
+    input.click();
+  };
+
+  for (const button of document.querySelectorAll('[data-del-reference]')) {
+    button.onclick = async () => {
+      const id = button.dataset.delReference;
+      await deleteImage(id).catch(() => {});
+      project.references = (project.references || []).filter(r => r.id !== id);
+      await persist('project', project);
+      renderAssets();
+    };
+  }
+}
+
+const readFileAsDataUrl = file => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(new Error("Couldn't read that file."));
+  reader.readAsDataURL(file);
+});
 
 const variantLabel = { full: 'Full scene', plate: 'Scene plate' };
 
@@ -638,6 +706,7 @@ function frameCard(project, frame, price) {
           <button class="btn btn-go" data-generate="${frame.frame}|${v}">Generate · $${price.toFixed(3)}</button>
         </div>
         <details><summary class="meta">Prompt</summary><p class="prompt-text">${esc(frame[v])}</p></details>
+        ${v === 'full' && project.references?.length ? `<p class="meta" style="margin:6px 0 0">Generate will use ${project.references.length} brand reference${project.references.length === 1 ? '' : 's'}.</p>` : ''}
         <div class="shots" id="shots-${frame.frame}-${v}">${shots.map(a => `
           <figure class="shot" data-asset="${esc(a.id)}">
             <img alt="${esc(a.name)} ${variantLabel[v].toLowerCase()}" data-src="${esc(a.id)}">
@@ -706,7 +775,11 @@ function wireFrameCards(project, frames) {
     };
   }
 
-  // Thumbnails come out of IndexedDB after the card is on the page.
+  loadThumbnails();
+}
+
+// Thumbnails come out of IndexedDB after their cards are on the page.
+function loadThumbnails() {
   for (const img of document.querySelectorAll('img[data-src]')) {
     getImage(img.dataset.src).then(dataUrl => {
       if (!img.isConnected) return;
@@ -753,12 +826,17 @@ async function doGenerate(project, frame, variant, button) {
   button.textContent = 'Generating…';
   $('assets-msg').innerHTML = '';
   try {
+    // A plate is deliberately product-free, so references only go with the full scene.
+    const references = variant === 'full'
+      ? (await Promise.all((project.references || []).slice(0, MAX_REFERENCES).map(r => getImage(r.id)))).filter(Boolean)
+      : [];
     const { dataUrl, bytes } = await generateImage({
       model: state.imageModel,
       prompt: frame[variant],
       aspect: frame.aspect_ratio,
       size: state.imageSize,
-      apiKey: state.imageKey
+      apiKey: state.imageKey,
+      references
     });
     await storeAsset(project, frame, variant, dataUrl, {
       source: 'generated', model: state.imageModel, cost: imagePrice(state.imageModel, state.imageSize), bytes
@@ -777,12 +855,7 @@ async function doGenerate(project, frame, variant, button) {
 async function doImport(project, frame, variant, file) {
   try {
     if (file.size > 12_000_000) throw new Error('That image is larger than 12 MB. Export a smaller version and import again.');
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(new Error("Couldn't read that file."));
-      reader.readAsDataURL(file);
-    });
+    const dataUrl = await readFileAsDataUrl(file);
     await storeAsset(project, frame, variant, dataUrl, { source: 'imported', bytes: file.size });
   } catch (e) {
     if ($('assets-msg')) $('assets-msg').innerHTML = `<div class="err" style="margin-top:16px">${esc(e.message)}</div>`;

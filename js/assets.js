@@ -50,6 +50,12 @@ export function assetRecord({ id, frame, variant, name, source, model, cost, byt
   };
 }
 
+// A brand reference: the client's own product, logo or room photo, attached to every generation
+// so the product stays itself from one post to the next.
+export function referenceRecord({ id, name, note, bytes }) {
+  return { id, name: name || 'Reference', note: note || '', bytes: bytes || 0, created: Date.now() };
+}
+
 export const assetsForFrame = (assets, frame, variant) =>
   (assets || []).filter(a => a.frame === frame && (!variant || a.variant === variant));
 
@@ -71,3 +77,9 @@ export function assetSummary(assets) {
 }
 
 export const totalAssetCost = assets => (assets || []).reduce((n, a) => n + (a.cost || 0), 0);
+
+// Named so later phases know the generated images show the client's real product.
+export function referenceSummary(references) {
+  if (!references?.length) return '';
+  return references.map(r => `- ${r.name}${r.note ? `: ${r.note}` : ''}`).join('\n');
+}

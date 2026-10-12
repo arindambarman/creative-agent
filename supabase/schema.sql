@@ -39,6 +39,8 @@ create index if not exists projects_user_idx on projects(user_id, updated_at des
 -- themselves stay in the browser's own storage; these columns hold only the details.
 alter table projects add column if not exists image_prompts jsonb not null default '[]'::jsonb;
 alter table projects add column if not exists assets jsonb not null default '[]'::jsonb;
+-- Brand reference images sent with every generation. "references" is reserved in SQL, hence the name.
+alter table projects add column if not exists brand_references jsonb not null default '[]'::jsonb;
 
 -- Every run of every phase is kept, so you can compare attempts.
 create table if not exists phase_runs (

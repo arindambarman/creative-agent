@@ -122,9 +122,15 @@ Working and tested:
   `assetSummary()` tells later phases which frames have a full scene or a plate.
   Google's image models need a paid tier: a free key returns "limit: 0 requests per day", and
   they accept `image/jpeg` only, not PNG.
+  Brand references: photos of the client's real product, logo or room, added on the Images
+  screen and kept in IndexedDB like any other image (`projects.brand_references` in Supabase;
+  "references" is reserved in SQL). Up to `MAX_REFERENCES` (4) go with every full-scene Generate,
+  led by `REFERENCE_INSTRUCTION`. Plates deliberately get none, since they must stay empty.
   Measured on 12 October 2026: Nano Banana 2.1 at 1K cost $0.0336 per image, 10-26 seconds, and
-  rendered label text and headlines correctly. It invents the product, and the label design
-  drifts between frames, so a client's real product still has to come from their own photo.
+  rendered label text and headlines correctly. Without a reference it invents the product and
+  the label design drifts between frames; with one product photo as a reference, the jar shape,
+  label design and label wording held across five different scenes (morning counter, lit dusk,
+  overhead flat lay, held in hands, square gift shot) for $0.17 the set.
 - Phase summaries: every phase prompt asks for a leading "## Summary" of four to six bullets
   (20 words or fewer each), focused by the phase's `summary` field in `js/phases.js`. The app
   splits it off with `splitSummary()` and shows it in a card above the output, including while

@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { IMAGE_MODELS, imageModel, imagePrice, buildImagePromptRequest, parseFramePrompts, generateImage, findImageData } from '../js/images.js';
+import { IMAGE_MODELS, MAX_REFERENCES, imageModel, imagePrice, buildImagePromptRequest, parseFramePrompts, generateImage, findImageData, dataUrlToPart, withReferences } from '../js/images.js';
+
+test('the reference instruction is only added when there are references', () => {
+  assert.match(withReferences('A scene.', 2), /exactly as they appear[\s\S]*A scene\./);
+  assert.equal(withReferences('A scene.', 0), 'A scene.');
+});
 
 test('image models have prices and a sensible default', () => {
   assert.ok(IMAGE_MODELS.length >= 3);
@@ -48,6 +53,41 @@ test('generates an image and returns a data URL', async () => {
   assert.match(sent.url, /generativelanguage\.googleapis\.com/);
   assert.deepEqual(sent.body.response_format, { type: 'image', mime_type: 'image/jpeg', aspect_ratio: '9:16', image_size: '2K' });
   assert.equal(sent.body.model, 'gemini-nano-banana-2.1');
+});
+
+test('reference images are sent with the prompt and the keep-it-the-same instruction', async () => {
+  let sent = null;
+  const fetchImpl = async (url, init) => { sent = JSON.parse(init.body); return okResponse({ output_image: { type: 'image', data: 'Zm9v' } }); };
+  await generateImage({
+    model: 'm', prompt: 'On an oak counter.', apiKey: 'test-value', fetchImpl,
+    references: ['data:image/jpeg;base64,AAA', 'data:image/png;base64,BBB', 'not-a-data-url']
+  });
+  assert.equal(sent.input.length, 3); // two usable references plus the text
+  assert.deepEqual(sent.input[0], { type: 'image', mime_type: 'image/jpeg', data: 'AAA' });
+  assert.deepEqual(sent.input[1], { type: 'image', mime_type: 'image/png', data: 'BBB' });
+  assert.match(sent.input[2].text, /^Use the product and brand materials from the reference images exactly/);
+  assert.match(sent.input[2].text, /On an oak counter\.$/);
+});
+
+test('without references the prompt goes as plain text', async () => {
+  let sent = null;
+  const fetchImpl = async (url, init) => { sent = JSON.parse(init.body); return okResponse({ output_image: { type: 'image', data: 'Zm9v' } }); };
+  await generateImage({ model: 'm', prompt: 'A plate with no product.', apiKey: 'test-value', fetchImpl });
+  assert.equal(sent.input, 'A plate with no product.');
+});
+
+test('at most four references travel with a request', async () => {
+  let sent = null;
+  const fetchImpl = async (url, init) => { sent = JSON.parse(init.body); return okResponse({ output_image: { type: 'image', data: 'Zm9v' } }); };
+  const many = Array.from({ length: 7 }, (_, i) => `data:image/jpeg;base64,IMG${i}`);
+  await generateImage({ model: 'm', prompt: 'x', apiKey: 'test-value', fetchImpl, references: many });
+  assert.equal(sent.input.filter(p => p.type === 'image').length, MAX_REFERENCES);
+});
+
+test('data URLs convert to image parts, and anything else is dropped', () => {
+  assert.deepEqual(dataUrlToPart('data:image/webp;base64,QQ=='), { type: 'image', mime_type: 'image/webp', data: 'QQ==' });
+  assert.equal(dataUrlToPart('https://example.com/a.jpg'), null);
+  assert.equal(dataUrlToPart(''), null);
 });
 
 test('a missing key points at the other way of working', async () => {

@@ -1,6 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assetRecord, assetsForFrame, assetSummary, totalAssetCost } from '../js/assets.js';
+import { assetRecord, referenceRecord, assetsForFrame, assetSummary, referenceSummary, totalAssetCost } from '../js/assets.js';
+
+test('a reference record keeps the picture out of the project too', () => {
+  const ref = referenceRecord({ id: 'r1', name: 'Jar photo', bytes: 90000 });
+  assert.equal(ref.id, 'r1');
+  assert.equal(ref.name, 'Jar photo');
+  assert.ok(!('dataUrl' in ref));
+  assert.equal(referenceRecord({ id: 'r2' }).name, 'Reference');
+});
+
+test('references are listed for the later phases', () => {
+  assert.equal(referenceSummary([{ name: 'Jar photo', note: 'client supplied' }, { name: 'Logo' }]),
+    '- Jar photo: client supplied\n- Logo');
+  assert.equal(referenceSummary([]), '');
+});
 
 test('an asset record keeps only what the project needs', () => {
   const record = assetRecord({ id: 'a1', frame: 2, variant: 'full', name: 'Label crop', source: 'generated', model: 'gemini-nano-banana-2.1', cost: 0.0336, bytes: 180000 });

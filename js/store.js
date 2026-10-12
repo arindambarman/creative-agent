@@ -117,7 +117,7 @@ const remoteStore = {
 
     const [docsRes, projRes, runRes] = await Promise.all([
       this.sb.from('studio_docs').select('voice, work, tools').eq('user_id', this.user.id).maybeSingle(),
-      this.sb.from('projects').select('id, name, brief, image_prompts, assets, created_at').eq('archived', false).order('updated_at', { ascending: false }),
+      this.sb.from('projects').select('id, name, brief, image_prompts, assets, brand_references, created_at').eq('archived', false).order('updated_at', { ascending: false }),
       this.sb.from('phase_runs').select('project_id, phase, output, created_at').eq('is_current', true)
     ]);
 
@@ -148,7 +148,7 @@ const remoteStore = {
       }
       return {
         id: p.id, name: p.name, brief: p.brief || {}, outputs, runAt,
-        imagePrompts: p.image_prompts || [], assets: p.assets || [],
+        imagePrompts: p.image_prompts || [], assets: p.assets || [], references: p.brand_references || [],
         created: new Date(p.created_at).getTime()
       };
     });
@@ -167,7 +167,8 @@ const remoteStore = {
     // Image prompts and the record of each image; the pictures themselves stay in the browser.
     const row = {
       id: project.id, user_id: this.user.id, name: project.name, brief: project.brief || {},
-      image_prompts: project.imagePrompts || [], assets: project.assets || []
+      image_prompts: project.imagePrompts || [], assets: project.assets || [],
+      brand_references: project.references || []
     };
     const { error } = await this.sb.from('projects').upsert(row);
     if (error) throw new Error(error.message);
