@@ -211,7 +211,12 @@ async function requestTurn({ url, headers, body, messages, signal, onText, onSea
       let detail = '';
       const raw = await res.text().catch(() => '');
       try { detail = JSON.parse(raw)?.error?.message || raw; } catch (e) { detail = raw; }
-      const err = new RunError(`Request failed (${res.status}). ${detail}`.trim(), text);
+      // A rejected key is the most common failure, and the raw message doesn't say which one.
+      const err = res.status === 401 || res.status === 403
+        ? Object.assign(
+            new RunError('Your Anthropic API key was rejected. Check it in Settings: it starts with "sk-ant-" and goes in the Anthropic box, not the image one.', text),
+            { needsKey: true })
+        : new RunError(`Request failed (${res.status}). ${detail}`.trim(), text);
       err.retryable = RETRYABLE_STATUS.includes(res.status);
       throw err;
     }

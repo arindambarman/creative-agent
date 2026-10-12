@@ -184,9 +184,18 @@ test('stopping a run is reported as aborted, not as an error', async () => {
   await assert.rejects(callModel({ ...baseArgs, fetchImpl: impl }), e => e.aborted === true && e.message === 'Run stopped.');
 });
 
-test('HTTP errors surface the API message', async () => {
+test('a rejected key says which key to check', async () => {
   const { impl } = fakeFetch([new Response(JSON.stringify({ error: { message: 'invalid x-api-key' } }), { status: 401 })]);
-  await assert.rejects(callModel({ ...baseArgs, fetchImpl: impl }), /Request failed \(401\)\. invalid x-api-key/);
+  await assert.rejects(callModel({ ...baseArgs, fetchImpl: impl }), e => {
+    assert.match(e.message, /Anthropic API key was rejected[\s\S]*sk-ant-/);
+    assert.equal(e.needsKey, true); // so the app offers Open Settings
+    return true;
+  });
+});
+
+test('other HTTP errors surface the API message', async () => {
+  const { impl } = fakeFetch([new Response(JSON.stringify({ error: { message: 'credit balance is too low' } }), { status: 400 })]);
+  await assert.rejects(callModel({ ...baseArgs, fetchImpl: impl }), /Request failed \(400\)\. credit balance is too low/);
 });
 
 test('error events mid-stream fail the run', async () => {
