@@ -604,7 +604,10 @@ function renderAssets() {
     <div id="assets-msg"></div>
     ${deliveryNote(p, frames)}
     ${referencePanel(p)}
-    <div id="frames">${frames.length ? '' : `<div class="empty" style="margin-top:18px">No prompts yet. Write them from the plan, then generate or copy them.</div>`}</div>`;
+    <div id="frames">${frames.length ? '' : `<div class="empty" style="margin-top:18px">
+      <strong>Start with “Write image prompts”.</strong><br>
+      It reads your plan${p.outputs?.deliver ? ' and delivery specification' : ''} and writes one prompt per frame,
+      in both versions, for about $0.02. Then generate them here or copy them into your own tool.</div>`}</div>`;
 
   wireReferences(p);
   loadThumbnails();
@@ -632,7 +635,12 @@ function deliveryNote(project, frames) {
       pick up exact export sizes, formats and platform requirements for each frame.</p>`;
   }
   const rows = exportRows(deliver, parseBlocks);
-  if (!rows.length || !frames.length) return '';
+  if (!rows.length) return '';
+  if (!frames.length) {
+    return `<p class="note" style="margin-top:16px">Your delivery specification lists ${rows.length}
+      ${rows.length === 1 ? 'deliverable' : 'deliverables'}: ${esc(rows.slice(0, 4).map(r => r.deliverable).join(', '))}${rows.length > 4 ? '…' : ''}.
+      Write the prompts to cover them, with the right size and format for each.</p>`;
+  }
   const { covered, missing } = coverage(frames, rows);
   if (!missing.length) {
     return `<p class="note" style="margin-top:16px">All ${covered.length} deliverables in the export list have a prompt.</p>`;
