@@ -15,7 +15,11 @@ import { PHASES } from './phases.js';
 
 const LOCAL_KEY = 'creative-agent-v1';
 const LOCAL_HISTORY_LIMIT = 5; // per phase; localStorage holds about 5 MB in total
-const blank = () => ({ docs: { ...SEED }, projects: [], currentId: null, apiKey: '', model: CONFIG.model });
+const blank = () => ({
+  docs: { ...SEED }, projects: [], currentId: null,
+  apiKey: '', model: CONFIG.model,
+  imageKey: '', imageModel: CONFIG.imageModel, imageSize: '1K'
+});
 export const newId = () =>
   (crypto.randomUUID ? crypto.randomUUID()
     : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
@@ -113,7 +117,7 @@ const remoteStore = {
 
     const [docsRes, projRes, runRes] = await Promise.all([
       this.sb.from('studio_docs').select('voice, work, tools').eq('user_id', this.user.id).maybeSingle(),
-      this.sb.from('projects').select('id, name, brief, created_at').eq('archived', false).order('updated_at', { ascending: false }),
+      this.sb.from('projects').select('id, name, brief, image_prompts, assets, created_at').eq('archived', false).order('updated_at', { ascending: false }),
       this.sb.from('phase_runs').select('project_id, phase, output, created_at').eq('is_current', true)
     ]);
 
@@ -142,7 +146,11 @@ const remoteStore = {
       for (const id of PHASE_IDS) {
         if (runs[id]) { outputs[id] = runs[id].output; runAt[id] = new Date(runs[id].created_at).getTime(); }
       }
-      return { id: p.id, name: p.name, brief: p.brief || {}, outputs, runAt, created: new Date(p.created_at).getTime() };
+      return {
+        id: p.id, name: p.name, brief: p.brief || {}, outputs, runAt,
+        imagePrompts: p.image_prompts || [], assets: p.assets || [],
+        created: new Date(p.created_at).getTime()
+      };
     });
     state.currentId = state.projects[0]?.id || null;
     return state;
@@ -156,7 +164,11 @@ const remoteStore = {
 
   async saveProject(state, project) {
     if (!project) return;
-    const row = { id: project.id, user_id: this.user.id, name: project.name, brief: project.brief || {} };
+    // Image prompts and the record of each image; the pictures themselves stay in the browser.
+    const row = {
+      id: project.id, user_id: this.user.id, name: project.name, brief: project.brief || {},
+      image_prompts: project.imagePrompts || [], assets: project.assets || []
+    };
     const { error } = await this.sb.from('projects').upsert(row);
     if (error) throw new Error(error.message);
   },

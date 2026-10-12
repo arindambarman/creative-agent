@@ -53,6 +53,8 @@ Two run modes, chosen by whether `js/config.js` has Supabase credentials:
 | `js/model.js` | Messages API streaming: resumes `pause_turn`, flags truncation, keeps partial text on failure. No DOM. |
 | `js/markdown.js` | `md()` renderer, `esc()`, `stripPreamble()`. No DOM. |
 | `js/document.js` | Export: builds the project document, a .docx (hand-written XML in a stored zip, no library), and the print page used for PDF. No DOM. |
+| `js/images.js` | Image prompts per frame, the image model list with prices, and the Google image call. No DOM. |
+| `js/assets.js` | Images in IndexedDB, asset records kept with the project, the summary later phases read. |
 | `js/intake.js` | Turns a pasted client request into brief fields: prompt, JSON parsing, open questions. No DOM. |
 | `tests/*.test.js` | Unit tests for `model.js` and `markdown.js`, run with Node's built-in runner. |
 | `js/store.js` | Storage adapter: local and Supabase backends behind one interface. |
@@ -111,6 +113,18 @@ Working and tested:
   Tested for real: met a screening word, bid the client's budget with milestones, and Plan
   compared its hours to the bid. The studio brain has no portfolio URLs, so it can name pieces
   but not link them.
+- Images screen: reads the Plan output, asks the text model for one prompt per frame in two
+  versions (`full`, the finished scene; `plate`, no product or text for compositing), then per
+  frame and version offers Copy prompt, Import image, and Generate. Generate uses a Google image
+  model chosen in the screen's picker (`IMAGE_MODELS` in `js/images.js`, prices per image) with
+  the key from Settings. The pictures live in IndexedDB; only `assetRecord()` details go in the
+  project (`projects.image_prompts` and `projects.assets` in Supabase, added by `schema.sql`).
+  `assetSummary()` tells later phases which frames have a full scene or a plate.
+  Google's image models need a paid tier: a free key returns "limit: 0 requests per day", and
+  they accept `image/jpeg` only, not PNG.
+  Measured on 12 October 2026: Nano Banana 2.1 at 1K cost $0.0336 per image, 10-26 seconds, and
+  rendered label text and headlines correctly. It invents the product, and the label design
+  drifts between frames, so a client's real product still has to come from their own photo.
 - Phase summaries: every phase prompt asks for a leading "## Summary" of four to six bullets
   (20 words or fewer each), focused by the phase's `summary` field in `js/phases.js`. The app
   splits it off with `splitSummary()` and shows it in a card above the output, including while

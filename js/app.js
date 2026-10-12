@@ -5,6 +5,8 @@ import { md, esc, stripPreamble, splitSummary, normaliseBullets, withSummary, se
 import { callModel, webSearchTool, costOf, RunError } from './model.js';
 import { INTAKE_MODEL, INTAKE_SYSTEM, buildIntakePrompt, parseIntake, notesWithQuestions } from './intake.js';
 import { projectDocument, buildDocx, buildPrintHtml, fileSlug } from './document.js';
+import { IMAGE_MODELS, IMAGE_PROMPT_SYSTEM, imageModel, imagePrice, buildImagePromptRequest, parseFramePrompts, generateImage } from './images.js';
+import { putImage, getImage, deleteImage, assetRecord, assetsForFrame, assetSummary, totalAssetCost } from './assets.js';
 
 const currentModel = () => modelInfo(state.model);
 
@@ -180,6 +182,9 @@ function renderRail() {
     nav.push(`<div class="nav ${view.screen === ph.id ? 'on' : ''}" data-go="${ph.id}">
       <span class="dot ${done ? 'done' : ''}" style="${done ? `background:${ph.color}` : ''}"></span>${ph.name}${ph.optional ? ' <small>optional</small>' : ''}</div>`);
   }
+  const hasAssets = p?.assets?.length;
+  nav.push(`<div class="nav ${view.screen === 'assets' ? 'on' : ''}" data-go="assets">
+    <span class="dot ${hasAssets ? 'done' : ''}" style="${hasAssets ? 'background:var(--brass)' : ''}"></span>Images</div>`);
   nav.push('<div class="rail-gap"></div>');
   nav.push(`<div class="nav ${view.screen === 'studio' ? 'on' : ''}" data-go="studio"><span class="dot"></span>Studio brain</div>`);
   $('nav').innerHTML = nav.join('');
@@ -559,6 +564,240 @@ async function renderHistory(phase) {
   $('h-back').onclick = () => renderPhase(phase);
 }
 
+// ---- Images -----------------------------------------------------------------
+// Two ways to work: generate here with an image key, or copy the prompt into another tool and
+// import the result. Both end with the image stored against its frame.
+
+function renderAssets() {
+  const p = current();
+  const plan = p.outputs?.plan;
+  const frames = p.imagePrompts || [];
+  const model = imageModel(state.imageModel);
+  const price = imagePrice(model.id, state.imageSize);
+  const spent = totalAssetCost(p.assets);
+
+  if (!plan) {
+    $('view').innerHTML = `<h1>Images</h1>
+      <p class="sub">Pictures for the frames in your plan: generated here, or made in another tool and imported.</p>
+      <div class="empty" style="margin-top:18px">Run the Plan phase first. Its frames become the prompts for each image.</div>
+      <div class="row" style="margin-top:14px"><button class="btn btn-go" id="go-plan">Go to Plan</button></div>`;
+    $('go-plan').onclick = () => { view = { screen: 'plan' }; render(); };
+    return;
+  }
+
+  $('view').innerHTML = `
+    <h1>Images</h1>
+    <p class="sub">One prompt per frame, in two versions: the finished scene, and the scene without the
+      product or text for you to composite onto.</p>
+    <div class="row">
+      <button class="btn btn-go" id="write-prompts">${frames.length ? 'Rewrite prompts from the plan' : 'Write image prompts'}</button>
+      <label class="model-pick" title="Image model used by Generate">
+        <span class="sr-only">Image model</span>
+        <select id="image-model">${IMAGE_MODELS.map(m => `<option value="${esc(m.id)}" ${m.id === model.id ? 'selected' : ''}>${esc(m.label)} · $${imagePrice(m.id, state.imageSize).toFixed(3)}</option>`).join('')}</select>
+      </label>
+      <label class="model-pick" title="Image size">
+        <span class="sr-only">Image size</span>
+        <select id="image-size">${Object.keys(model.sizes).map(s => `<option value="${s}" ${s === state.imageSize ? 'selected' : ''}>${s}</option>`).join('')}</select>
+      </label>
+      <span class="meta" style="margin:0">${esc(model.note)}${spent ? ` · $${spent.toFixed(2)} spent on this project` : ''}</span>
+    </div>
+    <div id="assets-msg"></div>
+    <div id="frames">${frames.length ? '' : `<div class="empty" style="margin-top:18px">No prompts yet. Write them from the plan, then generate or copy them.</div>`}</div>`;
+
+  $('write-prompts').onclick = doWritePrompts;
+  $('image-model').onchange = e => {
+    state.imageModel = e.target.value;
+    const sizes = Object.keys(imageModel(state.imageModel).sizes);
+    if (!sizes.includes(state.imageSize)) state.imageSize = sizes[0];
+    persist('all'); renderAssets();
+  };
+  $('image-size').onchange = e => { state.imageSize = e.target.value; persist('all'); renderAssets(); };
+
+  if (frames.length) {
+    $('frames').innerHTML = frames.map(f => frameCard(p, f, price)).join('');
+    wireFrameCards(p, frames);
+  }
+}
+
+const variantLabel = { full: 'Full scene', plate: 'Scene plate' };
+
+function frameCard(project, frame, price) {
+  const variants = ['full', 'plate'].filter(v => frame[v]);
+  return `<section class="card stack frame-card" style="margin-top:16px">
+    <div class="row"><h2 style="margin:0;flex:1">Frame ${esc(String(frame.frame))} · ${esc(frame.name)}</h2>
+      <span class="tag">${esc(frame.aspect_ratio)}</span></div>
+    ${variants.map(v => {
+      const shots = assetsForFrame(project.assets, frame.frame, v);
+      return `<div class="variant">
+        <div class="row">
+          <strong>${variantLabel[v]}</strong>
+          <span class="meta" style="margin:0">${v === 'plate' ? 'No product, no text' : 'Includes product and text'}</span>
+          <span style="flex:1"></span>
+          <button class="btn btn-quiet" data-copy-prompt="${frame.frame}|${v}">Copy prompt</button>
+          <button class="btn" data-import="${frame.frame}|${v}">Import image</button>
+          <button class="btn btn-go" data-generate="${frame.frame}|${v}">Generate · $${price.toFixed(3)}</button>
+        </div>
+        <details><summary class="meta">Prompt</summary><p class="prompt-text">${esc(frame[v])}</p></details>
+        <div class="shots" id="shots-${frame.frame}-${v}">${shots.map(a => `
+          <figure class="shot" data-asset="${esc(a.id)}">
+            <img alt="${esc(a.name)} ${variantLabel[v].toLowerCase()}" data-src="${esc(a.id)}">
+            <figcaption class="meta">${a.source === 'generated' ? `Generated${a.cost ? ` · $${a.cost.toFixed(3)}` : ''}` : 'Imported'}
+              <span style="flex:1"></span>
+              <button class="btn btn-quiet" data-download="${esc(a.id)}">Download</button>
+              <button class="btn btn-quiet" data-delete="${esc(a.id)}">Delete</button></figcaption>
+          </figure>`).join('')}</div>
+      </div>`;
+    }).join('')}
+  </section>`;
+}
+
+function wireFrameCards(project, frames) {
+  const frameOf = key => {
+    const [n, variant] = key.split('|');
+    return { frame: frames.find(f => String(f.frame) === n), variant };
+  };
+
+  for (const button of document.querySelectorAll('[data-copy-prompt]')) {
+    button.onclick = async () => {
+      const { frame, variant } = frameOf(button.dataset.copyPrompt);
+      try {
+        await navigator.clipboard.writeText(frame[variant]);
+        button.textContent = 'Copied';
+      } catch (e) { button.textContent = "Couldn't copy"; }
+      setTimeout(() => { if (button.isConnected) button.textContent = 'Copy prompt'; }, 1500);
+    };
+  }
+
+  for (const button of document.querySelectorAll('[data-generate]')) {
+    button.onclick = () => doGenerate(project, ...Object.values(frameOf(button.dataset.generate)), button);
+  }
+
+  for (const button of document.querySelectorAll('[data-import]')) {
+    button.onclick = () => {
+      const { frame, variant } = frameOf(button.dataset.import);
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/png,image/jpeg,image/webp';
+      input.onchange = () => { if (input.files?.[0]) doImport(project, frame, variant, input.files[0]); };
+      input.click();
+    };
+  }
+
+  for (const button of document.querySelectorAll('[data-download]')) {
+    button.onclick = async () => {
+      const asset = project.assets.find(a => a.id === button.dataset.download);
+      const dataUrl = await getImage(asset.id);
+      if (!dataUrl) return flash('That image is no longer in this browser.');
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `frame${asset.frame}-${asset.variant}.jpg`;
+      document.body.appendChild(a); a.click(); a.remove();
+    };
+  }
+
+  for (const button of document.querySelectorAll('[data-delete]')) {
+    button.onclick = async () => {
+      const id = button.dataset.delete;
+      if (!confirm('Delete this image? This cannot be undone.')) return;
+      await deleteImage(id).catch(() => {});
+      project.assets = (project.assets || []).filter(a => a.id !== id);
+      await persist('project', project);
+      renderAssets();
+    };
+  }
+
+  // Thumbnails come out of IndexedDB after the card is on the page.
+  for (const img of document.querySelectorAll('img[data-src]')) {
+    getImage(img.dataset.src).then(dataUrl => {
+      if (!img.isConnected) return;
+      if (dataUrl) img.src = dataUrl;
+      else img.replaceWith(Object.assign(document.createElement('p'), { className: 'meta', textContent: 'Image missing from this browser.' }));
+    }).catch(() => {});
+  }
+}
+
+async function doWritePrompts() {
+  const p = current();
+  const button = $('write-prompts');
+  button.disabled = true;
+  button.textContent = 'Reading the plan…';
+  $('assets-msg').innerHTML = '';
+  try {
+    const { url, headers } = await apiTarget();
+    const body = {
+      model: currentModel().id,
+      max_tokens: 8000,
+      stream: true,
+      system: IMAGE_PROMPT_SYSTEM,
+      messages: [{ role: 'user', content: buildImagePromptRequest(p.outputs.plan, p.brief) }]
+    };
+    if (currentModel().effort) body.output_config = { effort: currentModel().effort };
+    if (USE_SUPABASE) body.phase = 'image_prompts';
+    const result = await callModel({ url, headers, body });
+    p.imagePrompts = parseFramePrompts(result.text);
+    await persist('project', p);
+    if (view.screen === 'assets') renderAssets();
+  } catch (e) {
+    if (!$('assets-msg')) return;
+    $('assets-msg').innerHTML = `<div class="err" style="margin-top:16px">${esc(e.message)}
+      ${e.needsKey ? '<div class="row" style="margin-top:10px"><button class="btn" id="open-settings">Open Settings</button></div>' : ''}</div>`;
+    if ($('open-settings')) $('open-settings').onclick = settings;
+    button.disabled = false;
+    button.textContent = 'Write image prompts';
+  }
+}
+
+async function doGenerate(project, frame, variant, button) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Generating…';
+  $('assets-msg').innerHTML = '';
+  try {
+    const { dataUrl, bytes } = await generateImage({
+      model: state.imageModel,
+      prompt: frame[variant],
+      aspect: frame.aspect_ratio,
+      size: state.imageSize,
+      apiKey: state.imageKey
+    });
+    await storeAsset(project, frame, variant, dataUrl, {
+      source: 'generated', model: state.imageModel, cost: imagePrice(state.imageModel, state.imageSize), bytes
+    });
+  } catch (e) {
+    if ($('assets-msg')) {
+      $('assets-msg').innerHTML = `<div class="err" style="margin-top:16px">${esc(e.message)}
+        <div class="row" style="margin-top:10px"><button class="btn" id="open-settings">Open Settings</button></div></div>`;
+      $('open-settings').onclick = settings;
+    }
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+async function doImport(project, frame, variant, file) {
+  try {
+    if (file.size > 12_000_000) throw new Error('That image is larger than 12 MB. Export a smaller version and import again.');
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Couldn't read that file."));
+      reader.readAsDataURL(file);
+    });
+    await storeAsset(project, frame, variant, dataUrl, { source: 'imported', bytes: file.size });
+  } catch (e) {
+    if ($('assets-msg')) $('assets-msg').innerHTML = `<div class="err" style="margin-top:16px">${esc(e.message)}</div>`;
+  }
+}
+
+async function storeAsset(project, frame, variant, dataUrl, meta) {
+  const id = newId();
+  await putImage(id, dataUrl);
+  (project.assets ??= []).push(assetRecord({ id, frame: frame.frame, variant, name: frame.name, ...meta }));
+  await persist('project', project);
+  if (view.screen === 'assets' && state.currentId === project.id) renderAssets();
+  renderRail();
+}
+
 function renderStudio() {
   const tabs = [['voice', 'Brand voice'], ['work', 'Work and services'], ['tools', 'Tools and clients']];
   const active = view.doc || 'voice';
@@ -594,6 +833,7 @@ function render() {
   renderRail();
   if (!$('flash')) $('view').insertAdjacentHTML('beforebegin', '<div id="flash"></div>');
   if (view.screen === 'studio') return renderStudio();
+  if (view.screen === 'assets') return current() ? renderAssets() : renderEmpty();
   if (!current()) return renderEmpty();
   if (view.screen === 'brief') return renderBrief();
   const phase = PHASES.find(p => p.id === view.screen);
@@ -610,6 +850,10 @@ function settings() {
       : `<div><label for="k">Anthropic API key</label>
          <input id="k" type="password" value="${esc(state.apiKey)}" placeholder="sk-ant-…" autocomplete="off">
          <p class="meta">Stored in this browser only, and sent straight to Anthropic. Get a key at console.anthropic.com.</p></div>`}
+    <div><label for="ik">Image API key (Google AI Studio)</label>
+      <input id="ik" type="password" value="${esc(state.imageKey || '')}" placeholder="Leave empty to copy prompts instead" autocomplete="off">
+      <p class="meta">Only needed for Generate on the Images screen. Stored in this browser and sent only to Google.
+      Image models need a paid tier; the free tier allows none. Get a key at aistudio.google.com/apikey.</p></div>
     <div><label for="m">Model</label>
       <select id="m">${MODELS.map(m => `<option value="${esc(m.id)}" ${m.id === currentModel().id ? 'selected' : ''}>${esc(m.label)} — ${esc(m.note)} ($${m.input} in / $${m.output} out per million tokens)</option>`).join('')}</select>
       <p class="meta">Each phase shows what its last run cost. Web searches in Discover add $${WEB_SEARCH_PRICE.toFixed(2)} each.${USE_SUPABASE ? ' This choice lasts until you reload the page.' : ''}</p></div>
@@ -623,6 +867,7 @@ function settings() {
   $('s-close').onclick = close;
   $('s-save').onclick = () => {
     if ($('k')) state.apiKey = $('k').value.trim();
+    state.imageKey = $('ik').value.trim();
     state.model = $('m').value;
     persist('all'); close();
   };

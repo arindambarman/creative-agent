@@ -3,6 +3,7 @@
 // quality of the agent actually lives.
 
 import { splitSummary } from './markdown.js';
+import { assetSummary } from './assets.js';
 
 export const SYSTEM = `You are a creative director working alongside a visual content designer.
 
@@ -326,6 +327,11 @@ ${brief.request.trim()}
   const prior = PHASES
     .filter(p => priorOutputs[p.id])
     .map((p, i) => `${i === 0 ? '# Work so far\n\n' : ''}${priorPart(phase, p, priorOutputs[p.id])}\n`);
+
+  const assets = assetSummary(project.assets);
+  if (assets) {
+    prior.push(`## Images made so far\n\nThe designer has these pictures in hand. A "scene plate" still needs the real product and type added.\n\n${assets}\n`);
+  }
 
   return [studio, ...prior, `# Your task\n\n${summaryInstruction(phase)}\n\n${phase.prompt}`];
 }

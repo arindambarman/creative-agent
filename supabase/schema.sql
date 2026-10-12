@@ -35,6 +35,11 @@ create table if not exists projects (
 );
 create index if not exists projects_user_idx on projects(user_id, updated_at desc);
 
+-- Image prompts per frame, and a record of each generated or imported image. The pictures
+-- themselves stay in the browser's own storage; these columns hold only the details.
+alter table projects add column if not exists image_prompts jsonb not null default '[]'::jsonb;
+alter table projects add column if not exists assets jsonb not null default '[]'::jsonb;
+
 -- Every run of every phase is kept, so you can compare attempts.
 create table if not exists phase_runs (
   id uuid primary key default gen_random_uuid(),
