@@ -5,7 +5,7 @@
 // to your account, and the API key held server-side in the edge function.
 
 export const CONFIG = {
-  supabaseUrl: 'https://xfvailyojewmlgudpdel.supabase.co',
+  supabaseUrl: '',
   // The publishable key: safe to commit, it only allows what row-level security permits.
   supabaseAnonKey: 'sb_publishable_EzqwTpB7bjoy8rTyNZv2zQ_XHZ3dSHE',
   model: 'claude-sonnet-5',   // the default; people can pick another from MODELS in Settings
