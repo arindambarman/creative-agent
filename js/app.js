@@ -7,6 +7,7 @@ import { INTAKE_MODEL, INTAKE_SYSTEM, buildIntakePrompt, parseIntake, notesWithQ
 import { projectDocument, buildDocx, buildPrintHtml, fileSlug, parseBlocks } from './document.js';
 import { IMAGE_MODELS, IMAGE_PROMPT_SYSTEM, MAX_REFERENCES, SIZE_PIXELS, imageModel, imagePrice, buildImagePromptRequest, parseFramePrompts, generateImage, exportRows, coverage, longestSide } from './images.js';
 import { putImage, getImage, deleteImage, assetRecord, referenceRecord, assetsForFrame, assetSummary, totalAssetCost } from './assets.js';
+import { initLeads, renderLeads } from './leadsui.js';
 
 const currentModel = () => modelInfo(state.model);
 
@@ -38,6 +39,8 @@ async function persist(kind, ...args) {
     else if (kind === 'project') await store.saveProject(state, ...args);
     else if (kind === 'phase') await store.savePhase(state, ...args);
     else if (kind === 'delete') await store.deleteProject(state, ...args);
+    else if (kind === 'campaign') await store.saveCampaign(state, ...args);
+    else if (kind === 'delete-campaign') await store.deleteCampaign(state, ...args);
     // Local per-record saves only change memory, so the whole state is written once here.
     if (kind === 'all' || store.mode === 'local') await store.saveAll(state);
     return true;
@@ -118,6 +121,58 @@ async function runPhase(project, phase, { signal, onText, onSearch, onRetry }) {
   return callModel({ url, headers, body, signal, onText, onSearch, onRetry, idleMs });
 }
 
+// One model call for anything that isn't a phase: the lead agent's four runs. Phases keep their
+// own path in runPhase, which also handles cache markers and the partial-output rules.
+async function callApi({ body, phase, search = false, onText, onSearch }) {
+  const { url, headers } = await apiTarget();
+  const model = modelInfo(body.model);
+  const full = { ...body };
+  if (model?.effort && !full.output_config) full.output_config = { effort: model.effort };
+  if (search) full.tools = [webSearchTool(full.model, CONFIG.leadSearches)];
+  if (USE_SUPABASE && phase) full.phase = phase;
+  // Searches run server-side and the stream stays silent while they do.
+  return callModel({ url, headers, body: full, onText, onSearch, idleMs: search ? 300000 : 120000 });
+}
+
+// A lead that answers becomes an ordinary project, with everything already known about them
+// written into the brief so nothing is retyped.
+async function startProject(lead, campaign) {
+  // Only a real link is worth carrying into the brief; 'screenshot' is not a source to read.
+  const line = r => `${r.label}${r.detail ? ` — ${r.detail}` : ''}${r.date ? ` (${r.date})` : ''}${/^https?:/i.test(r.source || '') ? ` ${r.source}` : ''}`;
+  const seen = (lead.gaps || []).filter(g => g.seen);
+  const notes = [
+    lead.triggers?.length ? `Why now: ${lead.triggers.map(line).join('; ')}` : '',
+    seen.length ? `What their pictures are not doing: ${seen.map(line).join('; ')}` : '',
+    lead.pays?.length ? `Signs they can pay: ${lead.pays.map(line).join('; ')}` : '',
+    lead.website ? `Website: ${lead.website}` : '',
+    lead.instagram ? `Instagram: @${lead.instagram}` : '',
+    lead.contact ? `Contact: ${lead.contact}` : '',
+    `Found by the lead agent in the ${campaign.name} campaign (${campaign.place}).`
+  ].filter(Boolean).join('\n');
+
+  const p = {
+    id: newId(), name: lead.name, created: Date.now(), outputs: {}, runAt: {},
+    brief: {
+      client: lead.name, product: lead.what || '', category: campaign.niche || '',
+      goal: lead.triggers?.[0] ? `${lead.triggers[0].label}: ${lead.triggers[0].detail}` : '',
+      platforms: campaign.platforms || '', notes
+    }
+  };
+  state.projects.unshift(p);
+  state.currentId = p.id;
+  await persist('project', p);
+  view = { screen: 'brief' };
+  render();
+  flash(`Started a project for ${p.name}. The brief has what the lead agent already knows.`);
+  return p;
+}
+
+function openProject(id) {
+  state.currentId = id;
+  view = { screen: 'brief' };
+  render();
+}
+
 // Where requests go: straight to Anthropic with the browser's key, or through the edge function.
 async function apiTarget() {
   if (USE_SUPABASE) {
@@ -190,6 +245,9 @@ function renderRail() {
   nav.push(`<div class="nav ${view.screen === 'assets' ? 'on' : ''}" data-go="assets">
     <span class="dot ${hasAssets ? 'done' : ''}" style="${hasAssets ? 'background:var(--brass)' : ''}"></span>Images</div>`);
   nav.push('<div class="rail-gap"></div>');
+  const hasCampaigns = state.campaigns?.length;
+  nav.push(`<div class="nav ${view.screen === 'leads' ? 'on' : ''}" data-go="leads">
+    <span class="dot ${hasCampaigns ? 'done' : ''}" style="${hasCampaigns ? 'background:var(--brass)' : ''}"></span>Leads</div>`);
   nav.push(`<div class="nav ${view.screen === 'studio' ? 'on' : ''}" data-go="studio"><span class="dot"></span>Studio brain</div>`);
   $('nav').innerHTML = nav.join('');
 }
@@ -1052,6 +1110,8 @@ function render() {
   renderRail();
   if (!$('flash')) $('view').insertAdjacentHTML('beforebegin', '<div id="flash" role="status" aria-live="polite"></div>');
   if (view.screen === 'studio') return renderStudio();
+  // Leads belong to the studio, not to a project, so they open with no project selected.
+  if (view.screen === 'leads') return renderLeads();
   if (view.screen === 'assets') return current() ? renderAssets() : renderEmpty();
   if (!current()) return renderEmpty();
   if (view.screen === 'brief') return renderBrief();
@@ -1266,6 +1326,12 @@ function renderSignIn(message = '') {
 
 async function boot() {
   window.__appStarted = true; // tells the load-error notice in index.html that modules loaded
+  initLeads({
+    state: () => state,
+    view: () => view,
+    setView: next => { view = { ...next }; render(); },
+    persist, flash, settings, newId, callApi, startProject, openProject, costLine: runCostLine
+  });
   $('new-btn').onclick = newProject;
   $('settings-btn').onclick = settings;
   $('export-btn').onclick = exportProject;

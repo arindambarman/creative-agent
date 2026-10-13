@@ -10,6 +10,7 @@ export const CONFIG = {
   supabaseAnonKey: 'sb_publishable_EzqwTpB7bjoy8rTyNZv2zQ_XHZ3dSHE',
   model: 'claude-sonnet-5',   // the default; people can pick another from MODELS in Settings
   searchLimit: 6,             // most web searches Discover may run; each adds cost
+  leadSearches: 8,            // most searches one lead hunt may run; lists are worth more than depth
   imageModel: 'gemini-nano-banana-2.1' // default for the Assets screen; see IMAGE_MODELS in images.js
 };
 

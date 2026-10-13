@@ -30,6 +30,10 @@ Client brief
 Creative agent  ──  three studio brain docs (brand voice, work and services, tools and clients)
     ↓               one project brief file that every phase reads and writes back to
 Six phases: discover → propose (optional) → direct → plan → deliver → publish
+
+Leads (a separate section, same studio brain)
+Campaign = one place × one category
+  target → find → audit (screenshot) → approach → pipeline → start a project
 ```
 
 Two run modes, chosen by whether `js/config.js` has Supabase credentials:
@@ -56,6 +60,10 @@ Two run modes, chosen by whether `js/config.js` has Supabase credentials:
 | `js/images.js` | Image prompts per frame, the image model list with prices, and the Google image call. No DOM. |
 | `js/assets.js` | Images in IndexedDB, asset records kept with the project, the summary later phases read. |
 | `js/intake.js` | Turns a pasted client request into brief fields: prompt, JSON parsing, open questions. No DOM. |
+| `js/leads.js` | **The lead agent.** Four prompts: target, find, audit, approach. No DOM. |
+| `js/leadparse.js` | Reads the model's lead list; the scoring rubric, dedupe by domain, ranking. No DOM. |
+| `js/pipeline.js` | Lead statuses, the single follow-up, what is due, reply rate by trigger. No DOM. |
+| `js/leadsui.js` | The Leads screens. Gets everything it needs from `app.js` through `initLeads()`. |
 | `tests/*.test.js` | Unit tests for `model.js` and `markdown.js`, run with Node's built-in runner. |
 | `js/store.js` | Storage adapter: local and Supabase backends behind one interface. |
 | `js/seed.js` | Starter studio-brain text for new users. Templates with [brackets] to fill in. |
@@ -214,6 +222,40 @@ Written but not yet tested against a live Supabase project:
 - `supabase/functions/run-phase/index.ts` (origin allowlist via `ALLOWED_ORIGINS`, usage logged
   with the service role, only web search tools forwarded)
 
+### Lead agent
+
+Built 12 October 2026. A **campaign** is one place and one category; it holds leads. Nothing is
+ever sent from the app: it drafts, the designer sends.
+
+- **The rubric lives in `leadparse.js`, not in the prompt**, so two runs a week apart are
+  comparable and a score can be explained by pointing at the lines that produced it.
+  Tier A triggers score 2 each to a cap of 4, tier B gaps 1 each to a cap of 4, tier C 1 each to
+  a cap of 2. `APPROACH_THRESHOLD` is 6.
+- **A gap only scores once somebody has looked.** Search results describe a business; they do
+  not show you its photographs. Find returns gaps with `seen: false`, which score nothing and
+  may not be mentioned in a message. An **audit** — a screenshot of their feed, sent to the
+  model as an image block, shrunk to 1568 px first — turns them into `seen: true` and rescores.
+  `buildApproachRequest()` switches on this: with nothing seen, the message is built on the
+  trigger alone. This is the single rule that keeps the agent from writing confident nonsense
+  about pictures it never saw.
+- The audit is allowed to answer "their pictures are already good", which marks the lead as not
+  worth a message. That is a feature, not a failure.
+- **Dedupe is by domain** (`normaliseDomain`), then by name, against the campaign's own leads
+  and `state.doNotContact`. Running Find again adds only what is new.
+- Pipeline: `new → approached → replied → talking → won / lost / later / skip`, one follow-up
+  five days after an approach and then nothing. `outcomeSummary()` holds back a reply rate until
+  ten approaches, since acting on noise is how good angles get dropped.
+- **Won leads become projects**: `startProject()` writes the triggers, the seen gaps, the
+  contact route and the links into a brief, and the six phases take over.
+- Costs, measured against stubs and priced from the model table: target about $0.02, find about
+  $0.14 with eight searches, audit about $0.01, approach about $0.02. A campaign of twenty
+  businesses with five approaches is about $0.30.
+- Supabase: one `campaigns` table, the whole campaign as one jsonb document, same RLS pattern as
+  `projects`. `store.js` swallows a missing table so an older database still loads. Run the new
+  SQL in `supabase/schema.sql` before using Supabase mode.
+- The reasoning behind all of this, including where lead lists actually come from, is in
+  `docs/finding-cold-leads.md`; the build order is in `docs/lead-agent-plan.md`.
+
 ## Known gaps, roughly in priority order
 
 1. **Stale cached modules.** Each `js/*.js` file is cached on its own, so just after a deploy a
@@ -225,10 +267,16 @@ Written but not yet tested against a live Supabase project:
 2. **Image uploads.** Client photos, logos, and references should go to Supabase Storage and be
    attached to a project. Currently there is no upload anywhere.
 3. **Live Supabase test.** Run the full flow against a real project before sharing the site.
-4. **Side-by-side comparison** of two history versions.
-5. **Markdown renderer** in `js/markdown.js` is deliberately minimal. Extend it rather than adding
+4. **Lead agent, not yet run against the real API.** Built and tested end to end against a
+   stubbed Messages API on 12 October 2026: campaign, plan, find, dedupe, audit with a
+   screenshot, approach, status, follow-up dates, handoff to a project, and reload. The prompts
+   have never met live search results. Expect the first real run to need prompt tuning, most
+   likely in Find: whether it returns businesses that exist, in the right place, with sourced
+   triggers.
+5. **Side-by-side comparison** of two history versions.
+6. **Markdown renderer** in `js/markdown.js` is deliberately minimal. Extend it rather than adding
    a library, unless there's a strong reason.
-6. **Resuming a dropped research run.** A retry restarts the current request from scratch, so a
+7. **Resuming a dropped research run.** A retry restarts the current request from scratch, so a
    Discover run that drops late repeats its searches. Worth revisiting if drops stay common.
 
 ## Things not to do

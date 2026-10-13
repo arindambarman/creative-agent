@@ -42,6 +42,19 @@ alter table projects add column if not exists assets jsonb not null default '[]'
 -- Brand reference images sent with every generation. "references" is reserved in SQL, hence the name.
 alter table projects add column if not exists brand_references jsonb not null default '[]'::jsonb;
 
+-- Lead campaigns. The whole campaign, its leads and their history travel as one jsonb
+-- document: nothing queries inside it, and a campaign is always read and written in one piece.
+create table if not exists campaigns (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users on delete cascade,
+  name text not null default 'New campaign',
+  data jsonb not null default '{}'::jsonb,
+  archived boolean default false,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create index if not exists campaigns_user_idx on campaigns(user_id, updated_at desc);
+
 -- Every run of every phase is kept, so you can compare attempts.
 create table if not exists phase_runs (
   id uuid primary key default gen_random_uuid(),
@@ -80,6 +93,7 @@ create index if not exists usage_log_user_idx on usage_log(user_id, created_at d
 alter table profiles     enable row level security;
 alter table studio_docs  enable row level security;
 alter table projects     enable row level security;
+alter table campaigns    enable row level security;
 alter table phase_runs   enable row level security;
 alter table allowlist    enable row level security;
 alter table usage_log    enable row level security;
@@ -97,6 +111,10 @@ create policy own_docs on studio_docs
 
 drop policy if exists own_projects on projects;
 create policy own_projects on projects
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists own_campaigns on campaigns;
+create policy own_campaigns on campaigns
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 drop policy if exists own_runs on phase_runs;

@@ -16,7 +16,7 @@ import { PHASES } from './phases.js';
 const LOCAL_KEY = 'creative-agent-v1';
 const LOCAL_HISTORY_LIMIT = 5; // per phase; localStorage holds about 5 MB in total
 const blank = () => ({
-  docs: { ...SEED }, projects: [], currentId: null,
+  docs: { ...SEED }, projects: [], campaigns: [], doNotContact: [], currentId: null,
   apiKey: '', model: CONFIG.model,
   imageKey: '', imageModel: CONFIG.imageModel, imageSize: '1K'
 });
@@ -77,6 +77,8 @@ const localStore = {
   async saveDocs() {},
   async saveProject() {},
   async deleteProject() {},
+  async saveCampaign() {},
+  async deleteCampaign() {},
 
   async savePhase(state, project, phase, text, edited = false) {
     const runs = ((project.history ??= {})[phase] ??= []);
@@ -136,6 +138,12 @@ const remoteStore = {
     const state = blank();
     state.apiKey = ''; // never needed: the key lives in the edge function
 
+    // Campaigns are one jsonb row each. An older database without the table must not stop the
+    // rest of the app loading, so this one failure is swallowed and leaves an empty list.
+    const campaignRes = await this.sb.from('campaigns').select('id, data').eq('archived', false)
+      .order('updated_at', { ascending: false })
+      .then(r => r, () => ({ data: [], error: null }));
+
     const [docsRes, projRes, runRes] = await Promise.all([
       this.sb.from('studio_docs').select('voice, work, tools').eq('user_id', this.user.id).maybeSingle(),
       this.sb.from('projects').select('id, name, brief, image_prompts, assets, brand_references, created_at').eq('archived', false).order('updated_at', { ascending: false }),
@@ -173,6 +181,7 @@ const remoteStore = {
         created: new Date(p.created_at).getTime()
       };
     });
+    state.campaigns = (campaignRes.data || []).map(row => ({ ...(row.data || {}), id: row.id }));
     state.currentId = state.projects[0]?.id || null;
     return { ...state, ...loadPrefs() };
   },
@@ -192,6 +201,22 @@ const remoteStore = {
       brand_references: project.references || []
     };
     const { error } = await this.sb.from('projects').upsert(row);
+    if (error) throw new Error(error.message);
+  },
+
+  // The whole campaign travels as one jsonb document: it is read and written in one piece,
+  // and nothing else queries inside it.
+  async saveCampaign(state, campaign) {
+    if (!campaign) return;
+    const { error } = await this.sb.from('campaigns').upsert({
+      id: campaign.id, user_id: this.user.id, name: campaign.name,
+      data: campaign, updated_at: new Date().toISOString()
+    });
+    if (error) throw new Error(error.message);
+  },
+
+  async deleteCampaign(state, id) {
+    const { error } = await this.sb.from('campaigns').delete().eq('id', id);
     if (error) throw new Error(error.message);
   },
 

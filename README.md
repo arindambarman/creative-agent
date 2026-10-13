@@ -83,6 +83,14 @@ matches the storyboard, the 3D shot list, and the final captions.
 - Hooks, calls to action, hashtags, and a posting order across platforms
 - Checks for client approval and NDA status before drafting anything public
 
+### Finding work
+- Lead campaigns: pick a place and a category, and the agent researches small businesses there whose pictures are holding them back
+- Every lead carries a dated trigger with a source link — a launch, an opening, a rebrand, a hire
+- Nothing is claimed about a business's photographs until you paste a screenshot and the agent reads it
+- Scored out of ten, so the message goes to the five worth writing to, not the fifty
+- The first message and one follow-up, in your voice, with one small job and a price from your own rates
+- A lead that says yes becomes a project, with the brief already filled in
+
 ### Working with it
 - Paste a client request straight from Upwork, email or chat, and the brief fills itself in — with a list of what the client didn't say
 - Images for every frame in the plan: generate them one at a time or all at once, or copy the prompt into your own tool and import the result
