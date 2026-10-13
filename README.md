@@ -85,12 +85,13 @@ matches the storyboard, the 3D shot list, and the final captions.
 
 ### Working with it
 - Paste a client request straight from Upwork, email or chat, and the brief fills itself in — with a list of what the client didn't say
-- Images for every frame in the plan: generate them in the app, or copy the prompt into your own tool and import the result
+- Images for every frame in the plan: generate them one at a time or all at once, or copy the prompt into your own tool and import the result
+- Edit any image prompt by hand before spending money on it
 - Project workspace keeping the brief, phase outputs, and reference images together
 - Upload client photos, logos, and references directly into a project
 - Edit any output in place; your edits carry forward into later phases
 - Version history per phase, so you can compare attempts instead of losing the earlier one
-- Export the whole project as one PDF, Word document or markdown file to send to a client
+- Export the whole project as one PDF, Word document or markdown file to send to a client — the PDF includes the images
 
 ### Built for sharing
 - Static site on GitHub Pages — fork it and deploy in minutes

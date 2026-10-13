@@ -196,10 +196,13 @@ export function dataUrlToPart(dataUrl) {
   return { type: 'image', mime_type: match[1].toLowerCase(), data: match[2] };
 }
 
+// Errors the user fixes in Settings are marked, so the app can offer the button.
+const keyError = message => Object.assign(new Error(message), { needsKey: true });
+
 // One image from Google's image API. Returns the bytes as a data URL, ready to show or store.
 // `references` are data URLs of the client's own product, logo or room photos.
 export async function generateImage({ model, prompt, aspect = '4:5', size = '1K', apiKey, references = [], fetchImpl = fetch, signal }) {
-  if (!apiKey) throw new Error('Add an image API key in Settings, or use Copy prompt and import the image instead.');
+  if (!apiKey) throw keyError('Add an image API key in Settings, or use Copy prompt and import the image instead.');
   const referenceParts = references.slice(0, MAX_REFERENCES).map(dataUrlToPart).filter(Boolean);
   const res = await fetchImpl('https://generativelanguage.googleapis.com/v1beta/interactions', {
     method: 'POST',
@@ -221,6 +224,10 @@ export async function generateImage({ model, prompt, aspect = '4:5', size = '1K'
     const message = data?.error?.message || text.slice(0, 200);
     if (res.status === 429 && /free tier/i.test(message)) {
       throw new Error('This key has no image quota. Image models need a paid tier, even though text models are free.');
+    }
+    // The usual mix-up is the Anthropic key in the image box, which Google rejects as invalid.
+    if (res.status === 401 || res.status === 403 || /api[\s_-]?key not valid|invalid api key/i.test(message)) {
+      throw keyError('Your image API key was rejected. Check it in Settings: it comes from aistudio.google.com/apikey and goes in the image box, not the Anthropic one.');
     }
     throw new Error(`Image request failed (${res.status}). ${message}`.trim());
   }

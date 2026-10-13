@@ -27,6 +27,9 @@ export const MODELS = [
     input: 1, output: 5, effort: null }
 ];
 
+// Shown in Settings. Bump it when deploying, so a stale cached copy can be spotted by eye.
+export const VERSION = '2026-10-12';
+
 export const WEB_SEARCH_PRICE = 0.01; // per search
 
 export const modelInfo = id => MODELS.find(m => m.id === id) || MODELS.find(m => m.id === CONFIG.model);

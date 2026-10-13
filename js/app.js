@@ -1,4 +1,4 @@
-import { CONFIG, MODELS, WEB_SEARCH_PRICE, USE_SUPABASE, modelInfo } from './config.js';
+import { CONFIG, MODELS, VERSION, WEB_SEARCH_PRICE, USE_SUPABASE, modelInfo } from './config.js';
 import { PHASES, SYSTEM, buildContent, summaryPrompt } from './phases.js';
 import { store, newId } from './store.js';
 import { md, esc, stripPreamble, splitSummary, normaliseBullets, withSummary, sectionText } from './markdown.js';
@@ -25,6 +25,7 @@ const $ = id => document.getElementById(id);
 let state = { projects: [], currentId: null, docs: {}, apiKey: '' };
 let view = { screen: 'brief' };
 let running = null;      // { projectId, phaseId, controller } while a phase is streaming
+let batch = null;        // { stop } while Generate all is working through the frames
 let phaseNotice = null;  // { phaseId, text } shown once above a phase's output
 
 const current = () => state.projects.find(p => p.id === state.currentId) || null;
@@ -37,8 +38,8 @@ async function persist(kind, ...args) {
     else if (kind === 'project') await store.saveProject(state, ...args);
     else if (kind === 'phase') await store.savePhase(state, ...args);
     else if (kind === 'delete') await store.deleteProject(state, ...args);
-    else await store.saveAll(state);
-    if (store.mode === 'local') await store.saveAll(state);
+    // Local per-record saves only change memory, so the whole state is written once here.
+    if (kind === 'all' || store.mode === 'local') await store.saveAll(state);
     return true;
   } catch (e) {
     flash(`Couldn't save: ${e.message}`);
@@ -69,14 +70,17 @@ function cancelBriefSave() {
 window.addEventListener('beforeunload', e => {
   if (!pendingBriefSave) return;
   flushBriefSave();
-  e.preventDefault(); // a remote save may not finish before the page closes, so ask first
+  // A local save finishes at once; a remote one may not, so only that is worth asking about.
+  if (store.mode !== 'local') e.preventDefault();
 });
 
+let flashCount = 0;
 function flash(msg) {
   const el = $('flash');
   if (!el) return alert(msg);
   el.innerHTML = `<div class="err" style="margin-bottom:16px">${esc(msg)}</div>`;
-  setTimeout(() => { if ($('flash')) $('flash').innerHTML = ''; }, 6000);
+  const shown = ++flashCount;
+  setTimeout(() => { if (shown === flashCount && $('flash')) $('flash').innerHTML = ''; }, 6000);
 }
 
 async function newProject() {
@@ -482,6 +486,7 @@ async function doRun(phase) {
     running = null;
     renderRail();
     if (showing(p, phase)) renderPhase(phase);
+    else flash(`${phase.name} finished and saved. Open it from the list on the left to read it.`);
   } catch (e) {
     running = null;
     renderRail();
@@ -575,6 +580,7 @@ function renderAssets() {
   const model = imageModel(state.imageModel);
   const price = imagePrice(model.id, state.imageSize);
   const spent = totalAssetCost(p.assets);
+  const todo = frames.filter(f => f.full && !assetsForFrame(p.assets, f.frame, 'full').length);
 
   if (!plan) {
     $('view').innerHTML = `<h1>Images</h1>
@@ -591,6 +597,7 @@ function renderAssets() {
       product or text for you to composite onto.</p>
     <div class="row">
       <button class="btn btn-go" id="write-prompts">${frames.length ? 'Rewrite prompts from the plan' : 'Write image prompts'}</button>
+      ${todo.length ? `<button class="btn" id="generate-all">Generate ${todo.length} full ${todo.length === 1 ? 'scene' : 'scenes'} · $${(todo.length * price).toFixed(2)}</button>` : ''}
       <label class="model-pick" title="Image model used by Generate">
         <span class="sr-only">Image model</span>
         <select id="image-model">${IMAGE_MODELS.map(m => `<option value="${esc(m.id)}" ${m.id === model.id ? 'selected' : ''}>${esc(m.label)} · $${imagePrice(m.id, state.imageSize).toFixed(3)}</option>`).join('')}</select>
@@ -602,6 +609,7 @@ function renderAssets() {
       <span class="meta" style="margin:0">${esc(model.note)}${spent ? ` · $${spent.toFixed(2)} spent on this project` : ''}</span>
     </div>
     <div id="assets-msg"></div>
+    ${sizeNote(frames)}
     ${deliveryNote(p, frames)}
     ${referencePanel(p)}
     <div id="frames">${frames.length ? '' : `<div class="empty" style="margin-top:18px">
@@ -610,9 +618,8 @@ function renderAssets() {
       in both versions, for about $0.02. Then generate them here or copy them into your own tool.</div>`}</div>`;
 
   wireReferences(p);
-  loadThumbnails();
-
   $('write-prompts').onclick = doWritePrompts;
+  if ($('generate-all')) $('generate-all').onclick = () => doGenerateAll(p, frames);
   $('image-model').onchange = e => {
     state.imageModel = e.target.value;
     const sizes = Object.keys(imageModel(state.imageModel).sizes);
@@ -625,6 +632,21 @@ function renderAssets() {
     $('frames').innerHTML = frames.map(f => frameCard(p, f, price)).join('');
     wireFrameCards(p, frames);
   }
+  loadThumbnails(); // once, after every card that holds a picture is on the page
+}
+
+// A frame whose export needs more pixels than the chosen size will be enlarged in finishing,
+// which softens it. Better to say so before the money is spent.
+function sizeNote(frames) {
+  const generating = SIZE_PIXELS[state.imageSize] || 1024;
+  const short = frames.filter(f => longestSide(f.dimensions) > generating);
+  if (!short.length) return '';
+  const biggest = Math.max(...short.map(f => longestSide(f.dimensions)));
+  const bigger = Object.keys(imageModel(state.imageModel).sizes).find(s => (SIZE_PIXELS[s] || 0) > generating);
+  return `<p class="note" style="margin-top:16px">${short.length} ${short.length === 1 ? 'frame ships' : 'frames ship'} at more
+    than ${generating} px on the long side, up to ${biggest} px, so ${state.imageSize} is smaller than the export needs.
+    ${bigger ? `Switch the size to ${bigger} before generating ${short.length === 1 ? 'it' : 'those'}` : 'Generate at the largest size this model offers'},
+    or enlarge in finishing.</p>`;
 }
 
 // Checks the prompts against Deliver's export list, so nothing that has to ship is forgotten.
@@ -727,7 +749,7 @@ function frameCard(project, frame, price) {
       <span class="tag">${esc(frame.aspect_ratio)}</span></div>
     ${spec || frame.requirement ? `<p class="meta" style="margin:0">
       ${spec ? `Delivers: ${esc(spec)}` : ''}${frame.requirement ? `${spec ? ' · ' : ''}${esc(frame.requirement)}` : ''}
-      ${tooSmall ? `<br>Needs ${needed} px on the long side; ${state.imageSize} generates about ${generating} px, so generate at a larger size or enlarge it in finishing.` : ''}</p>` : ''}
+      ${tooSmall ? `<br>Ships at ${needed} px on the long side; ${state.imageSize} generates about ${generating} px.` : ''}</p>` : ''}
     ${variants.map(v => {
       const shots = assetsForFrame(project.assets, frame.frame, v);
       return `<div class="variant">
@@ -735,11 +757,15 @@ function frameCard(project, frame, price) {
           <strong>${variantLabel[v]}</strong>
           <span class="meta" style="margin:0">${v === 'plate' ? 'No product, no text' : 'Includes product and text'}</span>
           <span style="flex:1"></span>
+          ${frame.edits?.[v] ? '<span class="tag">edited</span>' : ''}
           <button class="btn btn-quiet" data-copy-prompt="${frame.frame}|${v}">Copy prompt</button>
+          <button class="btn btn-quiet" data-edit-prompt="${frame.frame}|${v}">Edit prompt</button>
           <button class="btn" data-import="${frame.frame}|${v}">Import image</button>
           <button class="btn btn-go" data-generate="${frame.frame}|${v}">Generate · $${price.toFixed(3)}</button>
         </div>
-        <details><summary class="meta">Prompt</summary><p class="prompt-text">${esc(frame[v])}</p></details>
+        <div id="prompt-${frame.frame}-${v}">
+          <details><summary class="meta">Prompt</summary><p class="prompt-text">${esc(frame[v])}</p></details>
+        </div>
         ${v === 'full' && project.references?.length ? `<p class="meta" style="margin:6px 0 0">Generate will use ${project.references.length} brand reference${project.references.length === 1 ? '' : 's'}.</p>` : ''}
         <div class="shots" id="shots-${frame.frame}-${v}">${shots.map(a => `
           <figure class="shot" data-asset="${esc(a.id)}">
@@ -772,7 +798,36 @@ function wireFrameCards(project, frames) {
   }
 
   for (const button of document.querySelectorAll('[data-generate]')) {
-    button.onclick = () => doGenerate(project, ...Object.values(frameOf(button.dataset.generate)), button);
+    button.onclick = () => {
+      const { frame, variant } = frameOf(button.dataset.generate);
+      doGenerate(project, frame, variant, button);
+    };
+  }
+
+  // The prompt is the thing worth iterating on, so it can be changed here instead of only
+  // in another tool. A hand-edited prompt is kept with the project until the prompts are rewritten.
+  for (const button of document.querySelectorAll('[data-edit-prompt]')) {
+    button.onclick = () => {
+      const { frame, variant } = frameOf(button.dataset.editPrompt);
+      const box = $(`prompt-${frame.frame}-${variant}`);
+      const id = `${frame.frame}-${variant}`;
+      box.innerHTML = `<div class="stack" style="margin-top:10px">
+        <textarea class="mono" id="pe-${id}" rows="8" aria-label="Prompt for frame ${esc(String(frame.frame))}">${esc(frame[variant])}</textarea>
+        <div class="row"><button class="btn btn-go" id="ps-${id}">Save prompt</button>
+          <button class="btn" id="pc-${id}">Cancel</button>
+          <span class="meta" style="margin:0">Saved with the project. Rewriting the prompts from the plan replaces it.</span></div>
+      </div>`;
+      $(`pe-${id}`).focus();
+      $(`pc-${id}`).onclick = () => renderAssets();
+      $(`ps-${id}`).onclick = async () => {
+        const text = $(`pe-${id}`).value.trim();
+        if (!text) return;
+        frame[variant] = text;
+        (frame.edits ??= {})[variant] = true;
+        await persist('project', project);
+        renderAssets();
+      };
+    };
   }
 
   for (const button of document.querySelectorAll('[data-import]')) {
@@ -808,8 +863,6 @@ function wireFrameCards(project, frames) {
       renderAssets();
     };
   }
-
-  loadThumbnails();
 }
 
 // Thumbnails come out of IndexedDB after their cards are on the page.
@@ -825,6 +878,9 @@ function loadThumbnails() {
 
 async function doWritePrompts() {
   const p = current();
+  const edited = (p.imagePrompts || []).some(f => f.edits);
+  if (p.imagePrompts?.length && !confirm(`Rewrite all ${p.imagePrompts.length} prompts from the plan?`
+    + (edited ? ' The prompts you edited by hand will be replaced.' : ''))) return;
   const button = $('write-prompts');
   button.disabled = true;
   button.textContent = 'Reading the plan…';
@@ -879,12 +935,63 @@ async function doGenerate(project, frame, variant, button) {
   } catch (e) {
     if ($('assets-msg')) {
       $('assets-msg').innerHTML = `<div class="err" style="margin-top:16px">${esc(e.message)}
-        <div class="row" style="margin-top:10px"><button class="btn" id="open-settings">Open Settings</button></div></div>`;
-      $('open-settings').onclick = settings;
+        ${e.needsKey ? '<div class="row" style="margin-top:10px"><button class="btn" id="open-settings">Open Settings</button></div>' : ''}</div>`;
+      if ($('open-settings')) $('open-settings').onclick = settings;
     }
     button.disabled = false;
     button.textContent = label;
   }
+}
+
+// Every frame that has no full scene yet, one after another. Sequential on purpose: the cost is
+// real money, so a key or quota failure stops the run instead of repeating on every frame.
+async function doGenerateAll(project, frames) {
+  if (batch) return;
+  const price = imagePrice(state.imageModel, state.imageSize);
+  const todo = frames.filter(f => f.full && !assetsForFrame(project.assets, f.frame, 'full').length);
+  if (!todo.length) return;
+  const ask = `Generate ${todo.length} full ${todo.length === 1 ? 'scene' : 'scenes'} with `
+    + `${imageModel(state.imageModel).label} at ${state.imageSize}? This spends about $${(todo.length * price).toFixed(2)}.`;
+  if (!confirm(ask)) return;
+
+  batch = { stop: false };
+  for (const b of document.querySelectorAll('[data-generate], [data-import], #generate-all, #write-prompts')) b.disabled = true;
+  const say = html => { if ($('assets-msg')) $('assets-msg').innerHTML = html; };
+
+  let made = 0, failed = '';
+  for (const [i, frame] of todo.entries()) {
+    say(`<div class="note" style="margin-top:16px">Generating ${i + 1} of ${todo.length}: frame ${esc(String(frame.frame))}, ${esc(frame.name)}.
+      Each takes 10 to 30 seconds.
+      <div class="row" style="margin-top:10px"><button class="btn" id="stop-batch">Stop after this one</button></div></div>`);
+    if ($('stop-batch')) $('stop-batch').onclick = () => {
+      batch.stop = true;
+      $('stop-batch').disabled = true;
+      $('stop-batch').textContent = 'Stopping after this one…';
+    };
+    try {
+      const references = (await Promise.all((project.references || []).slice(0, MAX_REFERENCES).map(r => getImage(r.id)))).filter(Boolean);
+      const { dataUrl, bytes } = await generateImage({
+        model: state.imageModel, prompt: frame.full, aspect: frame.aspect_ratio,
+        size: state.imageSize, apiKey: state.imageKey, references
+      });
+      await storeAsset(project, frame, 'full', dataUrl, {
+        source: 'generated', model: state.imageModel, cost: price, bytes
+      }, false);
+      made++;
+    } catch (e) {
+      failed = e.message;
+      break;
+    }
+    if (batch.stop) break;
+  }
+  const stopped = batch.stop;
+  batch = null;
+  if (view.screen !== 'assets' || state.currentId !== project.id) return;
+  renderAssets();
+  const spent = `$${(made * price).toFixed(2)} spent.`;
+  say(failed
+    ? `<div class="err" style="margin-top:16px">Stopped after ${made} of ${todo.length}. ${spent} ${esc(failed)}</div>`
+    : `<div class="note" style="margin-top:16px">${stopped ? `Stopped after ${made} of ${todo.length}.` : `Generated ${made} of ${todo.length}.`} ${spent}</div>`);
 }
 
 async function doImport(project, frame, variant, file) {
@@ -897,7 +1004,7 @@ async function doImport(project, frame, variant, file) {
   }
 }
 
-async function storeAsset(project, frame, variant, dataUrl, meta) {
+async function storeAsset(project, frame, variant, dataUrl, meta, rerender = true) {
   const id = newId();
   await putImage(id, dataUrl);
   (project.assets ??= []).push(assetRecord({
@@ -906,7 +1013,7 @@ async function storeAsset(project, frame, variant, dataUrl, meta) {
     ...meta
   }));
   await persist('project', project);
-  if (view.screen === 'assets' && state.currentId === project.id) renderAssets();
+  if (rerender && view.screen === 'assets' && state.currentId === project.id) renderAssets();
   renderRail();
 }
 
@@ -943,7 +1050,7 @@ function renderEmpty() {
 function render() {
   flushBriefSave(); // reads the brief form now, before this render replaces it
   renderRail();
-  if (!$('flash')) $('view').insertAdjacentHTML('beforebegin', '<div id="flash"></div>');
+  if (!$('flash')) $('view').insertAdjacentHTML('beforebegin', '<div id="flash" role="status" aria-live="polite"></div>');
   if (view.screen === 'studio') return renderStudio();
   if (view.screen === 'assets') return current() ? renderAssets() : renderEmpty();
   if (!current()) return renderEmpty();
@@ -954,8 +1061,20 @@ function render() {
 
 // ---- Settings, export, events ----------------------------------------------
 
+// One modal at a time. Returns its close function: the Close button, a click on the backdrop
+// and the Escape key all use the same one.
+function openModal(html) {
+  $('modal-root').innerHTML = `<div class="modal" id="modal">${html}</div>`;
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  const close = () => { $('modal-root').innerHTML = ''; document.removeEventListener('keydown', onKey); };
+  document.addEventListener('keydown', onKey);
+  $('modal').onclick = e => { if (e.target.id === 'modal') close(); };
+  $('modal').querySelector('input, select, button')?.focus();
+  return close;
+}
+
 function settings() {
-  $('modal-root').innerHTML = `<div class="modal" id="modal"><div class="card stack">
+  const close = openModal(`<div class="card stack">
     <h2>Settings</h2>
     ${USE_SUPABASE
       ? `<p class="note">Signed in as ${esc(store.user?.email || '')}. The API key is held server-side in the edge function, so there is nothing to enter here.</p>`
@@ -968,14 +1087,14 @@ function settings() {
       Image models need a paid tier; the free tier allows none. Get a key at aistudio.google.com/apikey.</p></div>
     <div><label for="m">Model</label>
       <select id="m">${MODELS.map(m => `<option value="${esc(m.id)}" ${m.id === currentModel().id ? 'selected' : ''}>${esc(m.label)} — ${esc(m.note)} ($${m.input} in / $${m.output} out per million tokens)</option>`).join('')}</select>
-      <p class="meta">Each phase shows what its last run cost. Web searches in Discover add $${WEB_SEARCH_PRICE.toFixed(2)} each.${USE_SUPABASE ? ' This choice lasts until you reload the page.' : ''}</p></div>
+      <p class="meta">Each phase shows what its last run cost. Web searches in Discover add $${WEB_SEARCH_PRICE.toFixed(2)} each.</p></div>
+    <p class="meta" style="margin:0">Version ${esc(VERSION)}. If the app behaves oddly just after an update, reload with Ctrl+F5.</p>
     <div class="row"><button class="btn btn-go" id="s-save">Save</button><button class="btn" id="s-close">Close</button>
       <span class="sp" style="flex:1"></span>
       ${USE_SUPABASE
         ? '<button class="btn btn-quiet" id="s-out">Sign out</button>'
         : '<button class="btn btn-quiet" id="s-reset">Reset all data</button>'}</div>
-  </div></div>`;
-  const close = () => { $('modal-root').innerHTML = ''; };
+  </div>`);
   $('s-close').onclick = close;
   $('s-save').onclick = () => {
     if ($('k')) state.apiKey = $('k').value.trim();
@@ -990,7 +1109,6 @@ function settings() {
     }
   };
   if ($('s-out')) $('s-out').onclick = async () => { await store.signOut(); location.reload(); };
-  $('modal').onclick = e => { if (e.target.id === 'modal') close(); };
 }
 
 function download(data, filename, type) {
@@ -1015,9 +1133,28 @@ function exportWord(p) {
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
 }
 
+// The pictures live in IndexedDB, so their bytes are read before the document is built.
+// Ordered by frame, so the images read in the same order as the plan.
+async function projectImages(project) {
+  const records = [...(project.assets || [])]
+    .sort((a, b) => a.frame - b.frame || String(a.variant).localeCompare(String(b.variant)));
+  const images = [];
+  for (const a of records) {
+    const dataUrl = await getImage(a.id).catch(() => null);
+    if (!dataUrl) continue; // deleted, or generated in another browser
+    images.push({
+      dataUrl,
+      caption: [`Frame ${a.frame} · ${a.name}`, a.variant === 'plate' ? 'scene plate' : 'full scene', a.deliverable]
+        .filter(Boolean).join(' — ')
+    });
+  }
+  return images;
+}
+
 // Opens the browser's print dialog on a print-styled copy; choosing "Save as PDF" there makes
 // a PDF with real, selectable text and no library needed.
-function exportPdf(p) {
+async function exportPdf(p) {
+  const doc = projectDocument(p, PHASES, FIELDS, new Date(), await projectImages(p));
   const frame = document.createElement('iframe');
   frame.setAttribute('aria-hidden', 'true');
   frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
@@ -1026,7 +1163,7 @@ function exportPdf(p) {
     frame.contentWindow.print();
     setTimeout(() => frame.remove(), 60000);
   };
-  frame.srcdoc = buildPrintHtml(projectDocument(p, PHASES, FIELDS));
+  frame.srcdoc = buildPrintHtml(doc);
   document.body.appendChild(frame);
 }
 
@@ -1035,29 +1172,29 @@ function exportProject() {
   const p = current();
   if (!p) return flash('Open a project first, then export it.');
   const done = PHASES.filter(ph => p.outputs[ph.id]);
-  $('modal-root').innerHTML = `<div class="modal" id="modal"><div class="card stack">
+  const shots = (p.assets || []).length;
+  const close = openModal(`<div class="card stack">
     <h2>Export project</h2>
     <p class="sub" style="margin:0">${esc(p.name)}: the brief${p.brief?.request ? ', the original client request' : ''} and
       ${done.length ? `${done.length} ${done.length === 1 ? 'phase' : 'phases'} (${esc(done.map(ph => ph.name).join(', '))})` : 'no phases yet'}.
-      Each phase starts on a new page.</p>
+      Each phase starts on a new page.${shots ? ` ${shots} ${shots === 1 ? 'image is' : 'images are'} included in the PDF.` : ''}</p>
     ${done.length < PHASES.length ? `<p class="note" style="margin:0">Phases that haven't run are left out. Run them first for a complete document.</p>` : ''}
     <div class="export-options">
-      <button class="export-option" id="x-pdf"><strong>PDF</strong><span>Opens the print dialog. Choose "Save as PDF" as the printer.</span></button>
-      <button class="export-option" id="x-word"><strong>Word document</strong><span>A .docx file for Word, Google Docs or Pages.</span></button>
-      <button class="export-option" id="x-md"><strong>Markdown</strong><span>Plain text, for notes apps or version control.</span></button>
+      <button class="export-option" id="x-pdf"><strong>PDF</strong><span>Opens the print dialog. Choose "Save as PDF" as the printer.${shots ? ' Includes the images.' : ''}</span></button>
+      <button class="export-option" id="x-word"><strong>Word document</strong><span>A .docx file for Word, Google Docs or Pages. Text only.</span></button>
+      <button class="export-option" id="x-md"><strong>Markdown</strong><span>Plain text, for notes apps or version control. Text only.</span></button>
     </div>
     <div class="row"><button class="btn" id="x-close">Close</button></div>
-  </div></div>`;
-  const close = () => { $('modal-root').innerHTML = ''; };
-  const run = fn => () => {
-    try { fn(p); close(); }
-    catch (e) { flash(`Couldn't export: ${e.message}`); close(); }
+  </div>`);
+  const run = fn => async () => {
+    close();
+    try { await fn(p); }
+    catch (e) { flash(`Couldn't export: ${e.message}`); }
   };
   $('x-pdf').onclick = run(exportPdf);
   $('x-word').onclick = run(exportWord);
   $('x-md').onclick = run(exportMarkdown);
   $('x-close').onclick = close;
-  $('modal').onclick = e => { if (e.target.id === 'modal') close(); };
 }
 
 document.addEventListener('click', e => {

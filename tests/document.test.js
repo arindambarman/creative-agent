@@ -88,6 +88,24 @@ test('print page escapes the title and starts phases on new pages', () => {
   assert.match(html, /<section class="new-page">/);
 });
 
+test('images reach the print page, and only the ones with bytes', () => {
+  const doc = projectDocument(
+    { name: 'x', brief: {}, outputs: {} }, [], [], new Date('2026-10-12T09:00:00Z'),
+    [{ dataUrl: 'data:image/jpeg;base64,AAA', caption: 'Frame 1 · Counter — full scene' }, { caption: 'lost' }]
+  );
+  assert.equal(doc.images.length, 1, 'an image with no bytes is left out');
+  const html = buildPrintHtml(doc);
+  assert.match(html, /<img src="data:image\/jpeg;base64,AAA" alt="Frame 1 · Counter — full scene">/);
+  assert.match(html, /<h1>Images<\/h1>/);
+  assert.doesNotMatch(html, /lost/);
+});
+
+test('a project with no images has no images page', () => {
+  const doc = projectDocument({ name: 'x', brief: {}, outputs: {} }, [], []);
+  assert.deepEqual(doc.images, []);
+  assert.doesNotMatch(buildPrintHtml(doc), /<h1>Images<\/h1>/);
+});
+
 test('file names are safe', () => {
   assert.equal(fileSlug('Hearth & Grain: Toasted Oat Latte launch'), 'hearth-grain-toasted-oat-latte-launch');
   assert.equal(fileSlug(''), 'project');

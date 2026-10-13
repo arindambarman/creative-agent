@@ -155,7 +155,25 @@ test('data URLs convert to image parts, and anything else is dropped', () => {
 });
 
 test('a missing key points at the other way of working', async () => {
-  await assert.rejects(generateImage({ model: 'x', prompt: 'y' }), /Copy prompt and import the image instead/);
+  await assert.rejects(generateImage({ model: 'x', prompt: 'y' }), e => {
+    assert.match(e.message, /Copy prompt and import the image instead/);
+    assert.equal(e.needsKey, true); // so the app offers Open Settings
+    return true;
+  });
+});
+
+test('a rejected image key says which key to check', async () => {
+  const cases = [
+    errResponse(400, { error: { message: 'API key not valid. Please pass a valid API key.' } }),
+    errResponse(403, { error: { message: 'Permission denied.' } })
+  ];
+  for (const response of cases) {
+    await assert.rejects(generateImage({ model: 'x', prompt: 'y', apiKey: 'test-value', fetchImpl: async () => response }), e => {
+      assert.match(e.message, /image API key was rejected[\s\S]*aistudio\.google\.com/);
+      assert.equal(e.needsKey, true);
+      return true;
+    });
+  }
 });
 
 test('a free-tier key gets an explanation, not a raw error', async () => {

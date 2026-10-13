@@ -98,7 +98,10 @@ Working and tested:
 - Every prompt includes today's date, so deadlines and source recency are judged correctly.
 - Export: Export project offers PDF (browser print dialog on a print-styled page, "Save as PDF"),
   Word (.docx) and Markdown. All three contain a cover, the brief, the original request, and
-  each completed phase on a new page. The .docx was checked by opening it in Microsoft Word
+  each completed phase on a new page. The PDF ends with an Images page: every stored picture,
+  two to a row, captioned with its frame, version and what it ships as. `projectImages()` in
+  `app.js` reads the bytes out of IndexedDB and passes them to `projectDocument(…, images)`;
+  Word and Markdown stay text only, and the export dialog says so. The .docx was checked by opening it in Microsoft Word
   (34 pages, 8 tables, 14 links, correct heading outline) and reading it with python-docx.
   WordprocessingML is order-sensitive (e.g. `w:rStyle` must be first in `w:rPr`, `w:shd` before
   `w:spacing` in `w:pPr`): check the schema order when adding formatting, and re-test in Word.
@@ -129,6 +132,11 @@ Working and tested:
   the screen lists any deliverable with no prompt. A frame whose export needs more pixels than
   the chosen size says so. Saved images record their deliverable, which `assetSummary()` passes
   back to the later phases.
+  Prompts can be edited by hand on the screen (Edit prompt); an edited prompt is tagged and kept
+  with the project, and rewriting from the plan asks before replacing it. "Generate N full
+  scenes" works through every frame with no full scene yet, one at a time, after a confirm that
+  states the cost; the first failure stops it rather than repeating on every frame. A note above
+  the frames says when the chosen size is smaller than the exports need.
   Brand references: photos of the client's real product, logo or room, added on the Images
   screen and kept in IndexedDB like any other image (`projects.brand_references` in Supabase;
   "references" is reserved in SQL). Up to `MAX_REFERENCES` (4) go with every full-scene Generate,
@@ -161,8 +169,10 @@ Working and tested:
   Tested on a real sample post: all fields correct, "within 2 weeks" converted to a date.
 - Cost: people choose a model in Settings (default Claude Sonnet 5 at effort medium; Sonnet 4.6
   and Haiku 4.5 also offered). Each phase shows its last run's model and approximate cost from
-  streamed usage. The model choice and per-run cost are kept in local mode only; in Supabase
-  mode they last until reload.
+  streamed usage. The model, the image key, the image model and the image size belong to the
+  browser rather than the account, so `store.js` keeps them in `creative-agent-prefs-v1` in both
+  modes (`loadPrefs`/`savePrefs`); Supabase mode used to lose them on every reload. The Anthropic
+  key is never in prefs: in Supabase mode it only exists in the edge function.
 - Cost levers in the prompts (see `js/phases.js`):
   - Each phase lists `readsInFull`, the earlier phases it needs word for word. Every other
     earlier output is sent as its summary (`priorPart()`), or in full if it has none.
@@ -206,13 +216,19 @@ Written but not yet tested against a live Supabase project:
 
 ## Known gaps, roughly in priority order
 
-1. **Image uploads.** Client photos, logos, and references should go to Supabase Storage and be
+1. **Stale cached modules.** Each `js/*.js` file is cached on its own, so just after a deploy a
+   browser can mix a new `app.js` with an older module. A missing *export* fails loudly and the
+   notice in `index.html` catches it; a changed *signature* fails silently (seen on 12 October
+   2026: an old `projectDocument` ignored its new `images` argument, so the PDF simply had no
+   images). Settings shows `VERSION` from `js/config.js` so a stale copy can be spotted by eye,
+   and Ctrl+F5 fixes it. A real fix needs versioned module URLs, which needs a build step.
+2. **Image uploads.** Client photos, logos, and references should go to Supabase Storage and be
    attached to a project. Currently there is no upload anywhere.
-2. **Live Supabase test.** Run the full flow against a real project before sharing the site.
-3. **Side-by-side comparison** of two history versions.
-4. **Markdown renderer** in `js/markdown.js` is deliberately minimal. Extend it rather than adding
+3. **Live Supabase test.** Run the full flow against a real project before sharing the site.
+4. **Side-by-side comparison** of two history versions.
+5. **Markdown renderer** in `js/markdown.js` is deliberately minimal. Extend it rather than adding
    a library, unless there's a strong reason.
-5. **Resuming a dropped research run.** A retry restarts the current request from scratch, so a
+6. **Resuming a dropped research run.** A retry restarts the current request from scratch, so a
    Discover run that drops late repeats its searches. Worth revisiting if drops stay common.
 
 ## Things not to do

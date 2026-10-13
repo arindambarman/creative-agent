@@ -24,6 +24,27 @@ export const newId = () =>
   (crypto.randomUUID ? crypto.randomUUID()
     : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
 
+// ---- Browser settings -------------------------------------------------------
+// The model picker and the image key belong to this browser, not to the account: the image key
+// is the user's own Google key and never goes to the server. Supabase mode keeps projects
+// remotely but still has to remember these across a reload, so both backends keep them here.
+
+const PREFS_KEY = 'creative-agent-prefs-v1';
+const PREF_KEYS = ['model', 'imageKey', 'imageModel', 'imageSize'];
+
+export function loadPrefs() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PREFS_KEY)) || {};
+    return Object.fromEntries(PREF_KEYS.filter(k => saved[k]).map(k => [k, saved[k]]));
+  } catch (e) { return {}; }
+}
+
+export function savePrefs(state) {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(Object.fromEntries(PREF_KEYS.map(k => [k, state[k] || '']))));
+  } catch (e) { /* a full or blocked store must not fail a run */ }
+}
+
 // ---- Local ------------------------------------------------------------------
 // Individual saves only update state in memory; app.js follows every one with saveAll.
 
@@ -153,7 +174,7 @@ const remoteStore = {
       };
     });
     state.currentId = state.projects[0]?.id || null;
-    return state;
+    return { ...state, ...loadPrefs() };
   },
 
   async saveDocs(state) {
@@ -202,7 +223,8 @@ const remoteStore = {
   },
 
   async reset() { /* not offered in Supabase mode */ },
-  async saveAll() { /* nothing to do: writes are per-record */ }
+  // Projects and docs are written per record; only the browser's own settings are left.
+  async saveAll(state) { savePrefs(state); }
 };
 
 export const store = USE_SUPABASE ? remoteStore : localStore;
